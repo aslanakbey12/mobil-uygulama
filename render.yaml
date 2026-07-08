@@ -1,0 +1,27 @@
+# Render Blueprint — bu repoyu Render'a bağlayınca otomatik yapılandırır.
+# (Render → New → Blueprint → repo seç; ya da manuel Web Service kurup aynı ayarları gir.)
+services:
+  - type: web
+    name: kelime-odalari-server
+    runtime: node
+    plan: free                    # ücretsiz katman (15 dk hareketsizlikte uyur, ilk istekte ~1 dk uyanır)
+    buildCommand: npm install
+    startCommand: node src/server.js
+    healthCheckPath: /health
+    envVars:
+      # Eşleştirme: gerçek çok-oyunculu (2 kişi gerekir), 15 sn'de gevşe
+      - key: MATCH_MIN
+        value: "2"
+      - key: MATCH_IDEAL
+        value: "4"
+      - key: MATCH_RELAX_MS
+        value: "15000"
+      - key: MATCH_OVERLAP_MIN
+        value: "3"
+      - key: FREE_DAILY_ROOMS
+        value: "20"
+      - key: DEV_PREMIUM
+        value: "1"
+      # LiveKit boş → sesli oda kapalı (istemcide VOICE_LIVE=false zaten)
+      # Supabase boş → dev kimlik (x-user-id). Gerçek auth gelince JWT_SECRET eklenecek.
+      # PORT'u ELLE GİRME — Render otomatik atar, kod process.env.PORT'u okur.
