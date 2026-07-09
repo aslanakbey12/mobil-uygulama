@@ -18,6 +18,23 @@ const OVERLAP_MIN = parseInt(process.env.MATCH_OVERLAP_MIN || "3", 10); // eşle
 const POOL_CAP = 300;         // sunucuda tutulan havuz üst sınırı
 const FOCUS_CAP = 12;         // odaya yazılacak odak kelime sayısı
 
+// Bot-fill: yeterince gerçek oyuncu yoksa, kısa beklemeden sonra odayı botlarla doldur
+// (likidite: kimse boş odada takılmasın + tek kişi de girip inceleyebilsin). "0" ile kapatılır.
+const BOT_FILL = process.env.MATCH_BOT_FILL !== "0";
+const BACKFILL_MS = parseInt(process.env.MATCH_BACKFILL_MS || "12000", 10);
+const TARGET_SIZE = { voice: 3, text: 3, game: 4 };
+const BOT_NAMES = ["Ada", "Kaan", "Ela", "Deniz", "Mert", "Nil", "Efe", "Zeynep", "Aylin", "Poyraz"];
+
+function makeBot(seed, level, mode, name) {
+  const pool = ((seed && seed.pool) || []).slice(0, 60); // tohumdan havuz (grid/odak için)
+  const ens = pool.map(x => (typeof x === "string" ? x : x && x.en)).filter(Boolean);
+  return {
+    userId: "bot_" + Math.random().toString(36).slice(2, 10),
+    name: name || BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)],
+    level, mode, pool, poolSet: new Set(ens), joinedAt: Date.now(), bot: true,
+  };
+}
+
 // `${level}|${mode}` -> [{ userId, name, level, mode, joinedAt }]
 const queues = new Map();
 for (const l of LEVELS) for (const m of MODES) queues.set(`${l}|${m}`, []);
@@ -70,7 +87,26 @@ export function status(userId) {
 // Bir (seviye, tip) kuyruğunda oda kur: önce kelime örtüşmesine göre, zaman aşımında gevşet.
 function tryForm(level, mode) {
   const q = queues.get(qKey(level, mode));
-  if (!q || q.length < MIN) return;
+  if (!q || q.length === 0) return;
+
+  // Bot-fill: en eski gerçek oyuncu yeterince bekledi → botlarla doldurup başlat
+  // (MIN kontrolünden ÖNCE; tek kişi de girebilsin, kimse takılmasın)
+  if (BOT_FILL && Date.now() - q[0].joinedAt >= BACKFILL_MS) {
+    const target = TARGET_SIZE[mode] || 2;
+    const real = q.slice(0, target);
+    const seed = real[0];
+    const members = [...real];
+    while (members.length < target) {
+      const used = new Set(members.map(m => m.name));
+      const avail = BOT_NAMES.filter(n => !used.has(n));
+      const name = avail[Math.floor(Math.random() * avail.length)] || undefined;
+      members.push(makeBot(seed, level, mode, name));
+    }
+    removeFromQueue(q, real);
+    return form(level, mode, members);
+  }
+
+  if (q.length < MIN) return;
   const relaxed = Date.now() - q[0].joinedAt >= RELAX_MS;
 
   // IDEAL kişi birikince: örtüşme eşiğiyle hemen grupla
@@ -140,7 +176,7 @@ function form(level, mode, members) {
     mode,
     topic,
     focusWords,
-    members: members.map(m => ({ userId: m.userId, name: m.name })),
+    members: members.map(m => ({ userId: m.userId, name: m.name, bot: !!m.bot })),
     // Oyun modu: grid kurmak için üyelerin ağırlıklı havuzlarını odaya iliştir
     memberPools: mode === "game" ? members.map(m => ({ userId: m.userId, name: m.name, pool: m.pool })) : undefined,
   });

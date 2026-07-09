@@ -43,6 +43,7 @@ export function createGame(room) {
   const order = shuffle((room.members || []).map(m => m.userId));
   const game = {
     room: room.name,
+    bots: new Set((room.members || []).filter(m => m.bot).map(m => m.userId)),
     grid: words.map((en, i) => ({ en, role: roles[i], revealed: false })),
     order,
     describerIdx: 0,
@@ -95,6 +96,35 @@ export function guess(game, userId, index) {
   game.clue = null;
   if (game.status === "playing") game.describerIdx = (game.describerIdx + 1) % game.order.length;
   return { ok: true, result, index, en: cell.en, role: cell.role };
+}
+
+// Bot davranışı: TEK bir bot aksiyonu uygula (varsa). Sunucu bunu gecikmeyle döngüler.
+//  - Anlatıcı botsa ve ipucu yoksa → bot ipucu verir (açılmamış hedef için basit ipucu).
+//  - İpucu varsa ve anlatıcı İNSANsa → bir bot tahmin eder (rolü bildiğinden hedef seçer).
+//  - Anlatıcı botsa + ipucu varsa → sıra insanda, bot bir şey yapmaz.
+export function botTick(game) {
+  if (!game || game.status !== "playing" || !game.bots || game.bots.size === 0) return { acted: false };
+  const dId = describerId(game);
+  const describerIsBot = game.bots.has(dId);
+
+  if (describerIsBot && !game.clue) {
+    const targets = game.grid.filter(c => !c.revealed && c.role === "target");
+    const pick = targets[Math.floor(Math.random() * targets.length)] || game.grid.find(c => !c.revealed);
+    if (pick) { game.clue = { text: `🤖 "${pick.en[0].toUpperCase()}…" (${pick.en.length} harf)`, bot: true }; return { acted: true }; }
+    return { acted: false };
+  }
+
+  if (game.clue && !describerIsBot) {
+    const targets = game.grid.filter(c => !c.revealed && c.role === "target");
+    const cell = targets[0] || game.grid.find(c => !c.revealed);
+    if (cell) {
+      const botId = [...game.bots][0];
+      const idx = game.grid.indexOf(cell);
+      const r = guess(game, botId, idx);
+      return { acted: !r.error };
+    }
+  }
+  return { acted: false };
 }
 
 // Kişiye özel durum: rol bilgisi yalnız anlatıcıya (ve açılmış kartlarda herkese).

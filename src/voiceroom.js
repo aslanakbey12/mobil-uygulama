@@ -13,7 +13,7 @@ export function setBroadcaster(fn) { broadcaster = fn; }
 function bc(vr, payload) { if (broadcaster) broadcaster(vr.room, vr.members, payload); }
 
 export function createVoiceRoom(room) {
-  const members = (room.members || []).map(m => ({ userId: m.userId, name: m.name }));
+  const members = (room.members || []).map(m => ({ userId: m.userId, name: m.name, bot: !!m.bot }));
   const vr = {
     room: room.name,
     topic: room.topic || null,
@@ -60,6 +60,16 @@ function advanceTurn(vr) {
   if (vr.turnIdx === 0) vr.round++;
   vr.phase = "speaking";
   bc(vr, { type: "vr_state", state: stateFor(vr) });
+  maybeBotTurn(vr);
+}
+
+// Sıra bir bota gelirse kısa süre sonra otomatik pas (akış kilitlenmesin).
+export function maybeBotTurn(vr) {
+  const sp = vr.members.find(m => m.userId === currentSpeaker(vr));
+  if (sp && sp.bot && vr.status === "active" && vr.phase === "speaking") {
+    if (vr.timer) clearTimeout(vr.timer);
+    vr.timer = setTimeout(() => { if (vr.status === "active") advanceTurn(vr); }, 2600);
+  }
 }
 
 // Konuşan klibini yükledi → herkese oynat, klip süresi kadar sonra sıra ilerle.

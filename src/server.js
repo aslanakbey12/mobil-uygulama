@@ -54,13 +54,39 @@ function broadcastVoice(room) {
   for (const m of room.members) sockets.push(m.userId, { type: "vr_state", state: voiceroom.stateFor(vr) });
 }
 
-// Oda kurulunca eşleşen herkese anlık "matched" bildir (+ oyun modunda oyunu kur)
+// Oyun botlarını sürükle: bot anlatıcıysa ipucu versin, insan ipucundan sonra bot tahmin etsin.
+function driveGameBots(room) {
+  const step = () => {
+    const g = game.getGame(room.name);
+    if (!g || g.status !== "playing") return;
+    const r = game.botTick(g);
+    if (r && r.acted) { broadcastGame(room); setTimeout(step, 1500); }
+  };
+  setTimeout(step, 1500);
+}
+
+// Yazılı odada bot(lar) canlandırma mesajı atsın (oda ölü durmasın).
+const BOT_LINES = ["Hi! Ready to practice? 🙂", "Let's discuss the topic in English!", "What do you think about it?"];
+function seedBotChat(room) {
+  const bots = room.members.filter((m) => m.bot);
+  bots.slice(0, 2).forEach((bot, i) => {
+    setTimeout(() => {
+      const cur = getRoom(room.name);
+      if (!cur || !cur.members.some((m) => m.userId === bot.userId)) return;
+      const payload = { type: "chat", from: bot.userId, name: bot.name, text: BOT_LINES[i % BOT_LINES.length], ts: Date.now() };
+      for (const m of cur.members) sockets.push(m.userId, payload);
+    }, 1600 + i * 2600);
+  });
+}
+
+// Oda kurulunca eşleşen herkese anlık "matched" bildir (+ moda göre kur & botları sürükle)
 mm.onMatch((room) => {
   if (room.mode === "game") game.createGame(room);
   if (room.mode === "voice") voiceroom.createVoiceRoom(room);
   for (const m of room.members) sockets.push(m.userId, { type: "matched", room: clientRoom(room) });
-  if (room.mode === "game") broadcastGame(room);
-  if (room.mode === "voice") broadcastVoice(room);
+  if (room.mode === "game") { broadcastGame(room); driveGameBots(room); }
+  if (room.mode === "voice") { broadcastVoice(room); voiceroom.maybeBotTurn(voiceroom.getVoiceRoom(room.name)); }
+  if (room.mode === "text") seedBotChat(room);
 });
 
 // WebSocket rotası: istemci ?userId=&token= ile bağlanır, push alır
@@ -104,6 +130,7 @@ app.register(async function (appWs) {
         else return;
         if (r && r.error) { sockets.push(userId, { type: "game_error", error: r.error }); return; }
         broadcastGame(room);
+        driveGameBots(room); // insan aksiyonundan sonra botlar oynasın
         return;
       }
 
