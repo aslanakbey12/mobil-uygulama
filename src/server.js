@@ -7,6 +7,12 @@ import * as mod from "./moderation.js";
 import * as sockets from "./sockets.js";
 import * as league from "./league.js";
 import * as game from "./game.js";
+import * as voiceroom from "./voiceroom.js";
+
+// Sesli tur odası klipleri ikili (binary) gelir — Fastify'a parser tanıt
+voiceroom.setBroadcaster((roomName, members, payload) => {
+  for (const m of members) sockets.push(m.userId, payload);
+});
 import { mintToken, livekitConfigured } from "./token.js";
 import { getUserId, authConfigured } from "./auth.js";
 import { supaConfigured, supa } from "./supabase.js";
@@ -19,6 +25,10 @@ const app = Fastify({ logger: true });
 
 // WebSocket eklentisi (anlık eşleşme + odadan çıkarma bildirimi)
 app.register(websocket);
+
+// Sesli klip yüklemesi için ikili (binary) gövde ayrıştırıcı
+app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (req, body, done) => done(null, body));
+app.addContentTypeParser(/^audio\//, { parseAs: "buffer" }, (req, body, done) => done(null, body));
 
 function clientRoom(room) {
   return {
@@ -37,11 +47,20 @@ function broadcastGame(room) {
   for (const m of room.members) sockets.push(m.userId, { type: "game", state: game.stateFor(g, m.userId, names) });
 }
 
+// Sesli tur odası durumunu odadaki herkese yayınla
+function broadcastVoice(room) {
+  const vr = voiceroom.getVoiceRoom(room.name);
+  if (!vr) return;
+  for (const m of room.members) sockets.push(m.userId, { type: "vr_state", state: voiceroom.stateFor(vr) });
+}
+
 // Oda kurulunca eşleşen herkese anlık "matched" bildir (+ oyun modunda oyunu kur)
 mm.onMatch((room) => {
   if (room.mode === "game") game.createGame(room);
+  if (room.mode === "voice") voiceroom.createVoiceRoom(room);
   for (const m of room.members) sockets.push(m.userId, { type: "matched", room: clientRoom(room) });
   if (room.mode === "game") broadcastGame(room);
+  if (room.mode === "voice") broadcastVoice(room);
 });
 
 // WebSocket rotası: istemci ?userId=&token= ile bağlanır, push alır
@@ -87,6 +106,20 @@ app.register(async function (appWs) {
         broadcastGame(room);
         return;
       }
+
+      // Sesli tur odası
+      if (room.mode === "voice") {
+        const vr = voiceroom.getVoiceRoom(room.name) || voiceroom.createVoiceRoom(room);
+        if (msg.type === "vr_join") {
+          sockets.push(userId, { type: "vr_state", state: voiceroom.stateFor(vr) });
+          return;
+        }
+        if (msg.type === "vr_pass") {
+          const r = voiceroom.passTurn(vr, userId);
+          if (r && r.error) sockets.push(userId, { type: "vr_error", error: r.error });
+          return;
+        }
+      }
     });
   });
 });
@@ -117,6 +150,33 @@ app.post("/league/sync", async (req, reply) => {
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   const { name, weeklyXp, level } = req.body || {};
   return league.sync({ userId, name, weeklyXp, level });
+});
+
+// Sesli tur odası: sıra gelen konuşan klibini yükler → herkese oynatılır, sıra döner
+app.post("/voiceroom/clip", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const roomName = req.query?.room;
+  const room = getRoom(roomName);
+  if (!room || room.mode !== "voice") return reply.code(404).send({ error: "oda bulunamadı" });
+  if (!room.members.some((m) => m.userId === userId)) return reply.code(403).send({ error: "erişim yok" });
+  const buf = req.body;
+  if (!buf || !buf.length) return reply.code(400).send({ error: "ses verisi yok" });
+  const clipId = voiceroom.putClip(buf, req.headers["content-type"] || "audio/m4a");
+  const durationMs = parseInt(req.headers["x-duration-ms"] || "3000", 10);
+  const vr = voiceroom.getVoiceRoom(roomName);
+  const r = voiceroom.onClip(vr, userId, clipId, durationMs);
+  if (r.error) return reply.code(409).send({ error: r.error });
+  return { ok: true, clipId };
+});
+
+// Klibi indir (oynatmak için) — kısa ömürlü, tahmin edilemez id
+app.get("/voiceroom/clip/:id", async (req, reply) => {
+  const c = voiceroom.getClip(req.params.id);
+  if (!c) return reply.code(404).send({ error: "klip bulunamadı" });
+  reply.header("content-type", c.contentType);
+  reply.header("cache-control", "no-store");
+  return reply.send(c.buf);
 });
 
 // Kuyruğa katıl
