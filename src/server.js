@@ -125,7 +125,7 @@ app.register(async function (appWs) {
         const g = game.getGame(room.name);
         if (!g) return;
         let r;
-        if (msg.type === "game_clue") r = game.giveClue(g, userId, msg.text);
+        if (msg.type === "game_clue") r = game.giveClue(g, userId, msg.word, msg.number);
         else if (msg.type === "game_guess") r = game.guess(g, userId, msg.index);
         else return;
         if (r && r.error) { sockets.push(userId, { type: "game_error", error: r.error }); return; }
