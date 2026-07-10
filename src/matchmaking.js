@@ -22,7 +22,10 @@ const FOCUS_CAP = 12;         // odaya yazılacak odak kelime sayısı
 // (likidite: kimse boş odada takılmasın + tek kişi de girip inceleyebilsin). "0" ile kapatılır.
 const BOT_FILL = process.env.MATCH_BOT_FILL !== "0";
 const BACKFILL_MS = parseInt(process.env.MATCH_BACKFILL_MS || "12000", 10);
-const TARGET_SIZE = { voice: 3, text: 3, game: 4 };
+// Mod başına oda boyutu: yazılı = 1-1 (2 kişi), sesli = tur odası, oyun = 2v2.
+const MODE_SIZE = { voice: 4, text: 2, game: 4 };
+const TARGET_SIZE = { voice: 3, text: 2, game: 4 }; // bot-fill hedefi
+const idealFor = (mode) => MODE_SIZE[mode] || IDEAL;
 const BOT_NAMES = ["Ada", "Kaan", "Ela", "Deniz", "Mert", "Nil", "Efe", "Zeynep", "Aylin", "Poyraz"];
 
 function makeBot(seed, level, mode, name) {
@@ -107,17 +110,18 @@ function tryForm(level, mode) {
   }
 
   if (q.length < MIN) return;
+  const ideal = idealFor(mode);   // yazılı=2 (1-1), sesli/oyun=4
   const relaxed = Date.now() - q[0].joinedAt >= RELAX_MS;
 
-  // IDEAL kişi birikince: örtüşme eşiğiyle hemen grupla
-  if (q.length >= IDEAL) {
-    const chosen = pickByOverlap(q, IDEAL, relaxed ? 0 : OVERLAP_MIN);
+  // Mod boyutu kadar kişi birikince: örtüşme eşiğiyle hemen grupla
+  if (q.length >= ideal) {
+    const chosen = pickByOverlap(q, ideal, relaxed ? 0 : OVERLAP_MIN);
     if (chosen.length >= MIN) { removeFromQueue(q, chosen); return form(level, mode, chosen); }
   }
 
   // Zaman aşımı: örtüşme şartını kaldır, MIN ile kur (kimse takılı kalmasın)
   if (relaxed) {
-    const chosen = pickByOverlap(q, Math.min(IDEAL, q.length), 0);
+    const chosen = pickByOverlap(q, Math.min(ideal, q.length), 0);
     if (chosen.length >= MIN) { removeFromQueue(q, chosen); return form(level, mode, chosen); }
   }
 }
