@@ -14,7 +14,7 @@ voiceroom.setBroadcaster((roomName, members, payload) => {
   for (const m of members) sockets.push(m.userId, payload);
 });
 import { mintToken, livekitConfigured } from "./token.js";
-import { getUserId, authConfigured } from "./auth.js";
+import { getUserId, authConfigured, verifyToken, tokenFromReq } from "./auth.js";
 import { supaConfigured, supa } from "./supabase.js";
 import { isPremium, setPremium } from "./entitlements.js";
 import { canEnterRoom, recordRoomEntry, roomsUsedToday, freeDailyLimit } from "./quota.js";
@@ -29,6 +29,12 @@ app.register(websocket);
 // Sesli klip yüklemesi için ikili (binary) gövde ayrıştırıcı
 app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (req, body, done) => done(null, body));
 app.addContentTypeParser(/^audio\//, { parseAs: "buffer" }, (req, body, done) => done(null, body));
+
+// Her istekte Supabase token'ını (varsa) doğrula → req.authUserId. getUserId bunu okur.
+app.addHook("onRequest", async (req) => {
+  const t = tokenFromReq(req);
+  if (t) req.authUserId = await verifyToken(t);
+});
 
 function clientRoom(room) {
   return {

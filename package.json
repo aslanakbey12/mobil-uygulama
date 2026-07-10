@@ -13,6 +13,7 @@
     "@fastify/websocket": "^10.0.1",
     "@supabase/supabase-js": "^2.108.2",
     "fastify": "^4.28.1",
+    "jose": "^6.2.3",
     "jsonwebtoken": "^9.0.3",
     "livekit-server-sdk": "^2.7.0",
     "ws": "^8.21.0"
