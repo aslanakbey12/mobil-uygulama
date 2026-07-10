@@ -87,42 +87,59 @@ export function status(userId) {
   return { status: "idle" };
 }
 
-// Bir (seviye, tip) kuyruğunda oda kur: önce kelime örtüşmesine göre, zaman aşımında gevşet.
+// Komşu seviyeleri (L-1, L, L+1) birleştir → daha geniş havuz, kelime örtüşmesi öne çıksın.
+// En eski bekleyen (seed) başta; oda seed'in seviyesiyle kurulur.
+function mergedWaiters(level, mode) {
+  const i = LEVELS.indexOf(level);
+  const adj = [LEVELS[i - 1], LEVELS[i], LEVELS[i + 1]].filter(Boolean);
+  let list = [];
+  for (const lv of adj) { const q = queues.get(qKey(lv, mode)); if (q && q.length) list = list.concat(q); }
+  list.sort((a, b) => a.joinedAt - b.joinedAt);
+  return list;
+}
+// Her üyeyi KENDİ seviye kuyruğundan çıkar (birleşik havuz farklı kuyruklardan gelir).
+function removeMembers(members) {
+  for (const m of members) {
+    const q = queues.get(qKey(m.level, m.mode));
+    if (q) { const idx = q.indexOf(m); if (idx !== -1) q.splice(idx, 1); }
+  }
+}
+
+// Oda kur: komşu seviyelerden birleşik havuz; önce kelime örtüşmesi, zaman aşımında gevşet.
 function tryForm(level, mode) {
-  const q = queues.get(qKey(level, mode));
-  if (!q || q.length === 0) return;
+  const pool = mergedWaiters(level, mode);
+  if (pool.length === 0) return;
+  const seed = pool[0];
 
   // Bot-fill: en eski gerçek oyuncu yeterince bekledi → botlarla doldurup başlat
-  // (MIN kontrolünden ÖNCE; tek kişi de girebilsin, kimse takılmasın)
-  if (BOT_FILL && Date.now() - q[0].joinedAt >= BACKFILL_MS) {
+  if (BOT_FILL && Date.now() - seed.joinedAt >= BACKFILL_MS) {
     const target = TARGET_SIZE[mode] || 2;
-    const real = q.slice(0, target);
-    const seed = real[0];
+    const real = pool.slice(0, target);
     const members = [...real];
     while (members.length < target) {
       const used = new Set(members.map(m => m.name));
       const avail = BOT_NAMES.filter(n => !used.has(n));
       const name = avail[Math.floor(Math.random() * avail.length)] || undefined;
-      members.push(makeBot(seed, level, mode, name));
+      members.push(makeBot(seed, seed.level, mode, name));
     }
-    removeFromQueue(q, real);
-    return form(level, mode, members);
+    removeMembers(real);
+    return form(seed.level, mode, members);
   }
 
-  if (q.length < MIN) return;
+  if (pool.length < MIN) return;
   const ideal = idealFor(mode);   // yazılı=2 (1-1), sesli/oyun=4
-  const relaxed = Date.now() - q[0].joinedAt >= RELAX_MS;
+  const relaxed = Date.now() - seed.joinedAt >= RELAX_MS;
 
   // Mod boyutu kadar kişi birikince: örtüşme eşiğiyle hemen grupla
-  if (q.length >= ideal) {
-    const chosen = pickByOverlap(q, ideal, relaxed ? 0 : OVERLAP_MIN);
-    if (chosen.length >= MIN) { removeFromQueue(q, chosen); return form(level, mode, chosen); }
+  if (pool.length >= ideal) {
+    const chosen = pickByOverlap(pool, ideal, relaxed ? 0 : OVERLAP_MIN);
+    if (chosen.length >= MIN) { removeMembers(chosen); return form(seed.level, mode, chosen); }
   }
 
   // Zaman aşımı: örtüşme şartını kaldır, MIN ile kur (kimse takılı kalmasın)
   if (relaxed) {
-    const chosen = pickByOverlap(q, Math.min(ideal, q.length), 0);
-    if (chosen.length >= MIN) { removeFromQueue(q, chosen); return form(level, mode, chosen); }
+    const chosen = pickByOverlap(pool, Math.min(ideal, pool.length), 0);
+    if (chosen.length >= MIN) { removeMembers(chosen); return form(seed.level, mode, chosen); }
   }
 }
 
