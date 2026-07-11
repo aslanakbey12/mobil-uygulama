@@ -73,9 +73,17 @@ export async function generatePassage(level, words) {
     contents: [{ parts: [{ text: buildPrompt(level, words) }] }],
     generationConfig: { responseMimeType: "application/json", temperature: 0.85, maxOutputTokens: 1000 },
   };
-  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) {
+  // Geçici yoğunluk (503/429/500) → kısa backoff ile 3 deneme
+  let r;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (r.ok) break;
+    if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 2) {
+      await new Promise((res) => setTimeout(res, 900 * (attempt + 1)));
+      continue;
+    }
     const t = await r.text().catch(() => "");
+    if (r.status === 503 || r.status === 429) throw new Error("AI şu an yoğun, birkaç saniye sonra tekrar dene.");
     throw new Error(`AI hatası (${r.status})${t ? ": " + t.slice(0, 120) : ""}`);
   }
   const data = await r.json();
