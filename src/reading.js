@@ -2,9 +2,9 @@
 // Kullanıcının öğrenme havuzundaki kelimelerden, seviyesine uygun kısa bir metin +
 // 3 anlama sorusu üretir. Kota tasarrufu için üretilenler önbelleğe alınır.
 const KEY = process.env.GEMINI_API_KEY || "";
-// Not: gemini-2.0-flash 1 Haz 2026'da kapatıldı. Güncel + ucuz + ücretsiz kotalı: 2.5-flash.
-// Daha da ucuz istersen GEMINI_MODEL=gemini-2.5-flash-lite ver.
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+// Not: eski modeller (2.0, 2.5-flash) yeni kullanıcılara kapatıldı. "flash-latest"
+// her zaman güncel GA flash'a (şu an 3.5-flash) çözülür ve yeni kullanıcılara açıktır.
+const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 const DAILY_CAP = parseInt(process.env.READING_DAILY_CAP || "20", 10);
 
 export const readingConfigured = () => !!KEY;
