@@ -71,7 +71,12 @@ export async function generatePassage(level, words) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
   const body = {
     contents: [{ parts: [{ text: buildPrompt(level, words) }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.85, maxOutputTokens: 1000 },
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0.85,
+      maxOutputTokens: 2048,
+      thinkingConfig: { thinkingBudget: 0 }, // düşünme kapalı: çıktı kesilmesin + hızlı/ucuz
+    },
   };
   // Geçici yoğunluk (503/429/500) → kısa backoff ile 3 deneme
   let r;
