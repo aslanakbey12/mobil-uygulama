@@ -36,6 +36,16 @@ Return ONLY valid JSON with this exact shape and nothing else:
 "answer" is the 0-based index of the correct option.`;
 }
 
+// LLM bazen JSON'u ```json ...``` içinde ya da önüne/sonuna metin ekleyerek döndürür.
+function extractJson(txt) {
+  let t = String(txt).trim();
+  t = t.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  const first = t.indexOf("{");
+  const last = t.lastIndexOf("}");
+  if (first >= 0 && last > first) t = t.slice(first, last + 1);
+  return t;
+}
+
 function normalize(p, level, words) {
   const questions = (Array.isArray(p.questions) ? p.questions : [])
     .slice(0, 3)
@@ -69,9 +79,12 @@ export async function generatePassage(level, words) {
     throw new Error(`AI hatası (${r.status})${t ? ": " + t.slice(0, 120) : ""}`);
   }
   const data = await r.json();
-  const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  const txt = parts.map((p) => p?.text || "").join("").trim();
+  if (!txt) throw new Error("AI boş yanıt döndü (güvenlik filtresi olabilir), tekrar dene.");
   let parsed;
-  try { parsed = JSON.parse(txt); } catch (e) { throw new Error("AI yanıtı çözümlenemedi."); }
+  try { parsed = JSON.parse(extractJson(txt)); }
+  catch (e) { throw new Error("AI yanıtı çözümlenemedi: " + txt.slice(0, 160)); }
   const out = normalize(parsed, level, words);
   if (!out.passage || out.questions.length === 0) throw new Error("Geçerli bir parça üretilemedi, tekrar dene.");
 
