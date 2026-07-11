@@ -8,6 +8,7 @@ import * as sockets from "./sockets.js";
 import * as league from "./league.js";
 import * as game from "./game.js";
 import * as voiceroom from "./voiceroom.js";
+import * as reading from "./reading.js";
 
 // Sesli tur odası klipleri ikili (binary) gelir — Fastify'a parser tanıt
 voiceroom.setBroadcaster((roomName, members, payload) => {
@@ -170,12 +171,31 @@ app.get("/health", async () => ({
   auth: authConfigured(),
   supabase: supaConfigured(),
   livekit: livekitConfigured(),
+  reading: reading.readingConfigured(),
   queues: mm.queueStats(),
   rooms: roomStats(),
   sockets: sockets.count(),
   moderation: mod.moderationStats(),
   league: league.leagueStats()
 }));
+
+// Okuma: kullanıcının öğrenme kelimelerinden seviyesine uygun parça + sorular üret
+app.post("/reading/generate", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!reading.readingConfigured()) return reply.code(503).send({ error: "Okuma servisi yakında etkinleşecek." });
+  if (!reading.underDailyCap(userId)) return reply.code(429).send({ error: "Bugünlük okuma hakkın doldu, yarın tekrar dene." });
+  const { level, words } = req.body || {};
+  const list = Array.isArray(words) ? [...new Set(words.filter(Boolean).map(String))].slice(0, 8) : [];
+  if (list.length < 3) return reply.code(400).send({ error: "Yeterli kelime yok. Önce Kelimeler'de birkaç kelime çalış." });
+  try {
+    const passage = await reading.generatePassage(level || "B1", list);
+    reading.bumpDaily(userId);
+    return { passage };
+  } catch (e) {
+    return reply.code(502).send({ error: String(e.message || e) });
+  }
+});
 
 // Haftalık lig: kullanıcının haftalık XP'sini bildir, pod sıralamasını al
 app.post("/league/sync", async (req, reply) => {
