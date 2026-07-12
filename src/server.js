@@ -197,6 +197,21 @@ app.post("/reading/generate", async (req, reply) => {
   }
 });
 
+// Hafıza kancası: bir kelime için akılda tutmayı kolaylaştıran kısa Türkçe ipucu üret
+app.post("/word/mnemonic", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!reading.readingConfigured()) return reply.code(503).send({ error: "AI servisi yakında etkinleşecek." });
+  const { en, tr } = req.body || {};
+  if (!en) return reply.code(400).send({ error: "kelime gerekli" });
+  try {
+    const mnemonic = await reading.generateMnemonic(String(en).slice(0, 40), String(tr || "").slice(0, 80));
+    return { mnemonic };
+  } catch (e) {
+    return reply.code(502).send({ error: String(e.message || e) });
+  }
+});
+
 // Haftalık lig: kullanıcının haftalık XP'sini bildir, pod sıralamasını al
 app.post("/league/sync", async (req, reply) => {
   const userId = getUserId(req);

@@ -63,6 +63,35 @@ function normalize(p, level, words) {
   };
 }
 
+// Hafıza kancası (mnemonic): bir kelimeyi akılda tutmaya yardımcı kısa Türkçe ipucu.
+const mnemoCache = new Map();
+export async function generateMnemonic(en, tr) {
+  const key = String(en).toLowerCase();
+  if (mnemoCache.has(key)) return mnemoCache.get(key);
+  if (!KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
+  const prompt = `Türk öğrenci için İngilizce "${en}" (Türkçe anlamı: ${tr}) kelimesini akılda tutmaya yardımcı, KISA (tek cümle, en fazla 20 kelime) yaratıcı bir hafıza kancası yaz. Kelimenin okunuşunu ya da görüntüsünü Türkçe bir çağrışımla anlamına bağla. SADECE Türkçe ipucu cümlesini yaz; tırnak, başlık veya açıklama ekleme.`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.9, maxOutputTokens: 200, thinkingConfig: { thinkingBudget: 0 } },
+  };
+  let r;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (r.ok) break;
+    if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 2) { await new Promise((res) => setTimeout(res, 700 * (attempt + 1))); continue; }
+    throw new Error(`AI hatası (${r.status})`);
+  }
+  const data = await r.json();
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  let txt = parts.map((p) => p?.text || "").join("").trim().replace(/^["'“”]+|["'“”]+$/g, "");
+  if (!txt) throw new Error("AI boş yanıt döndü.");
+  txt = txt.slice(0, 300);
+  if (mnemoCache.size >= 3000) mnemoCache.delete(mnemoCache.keys().next().value);
+  mnemoCache.set(key, txt);
+  return txt;
+}
+
 export async function generatePassage(level, words) {
   const cacheKey = `${level}|${[...words].sort().join(",")}`;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
