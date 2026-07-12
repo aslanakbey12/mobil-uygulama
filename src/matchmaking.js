@@ -21,7 +21,7 @@ const FOCUS_CAP = 12;         // odaya yazılacak odak kelime sayısı
 // Bot-fill: yeterince gerçek oyuncu yoksa, kısa beklemeden sonra odayı botlarla doldur
 // (likidite: kimse boş odada takılmasın + tek kişi de girip inceleyebilsin). "0" ile kapatılır.
 const BOT_FILL = process.env.MATCH_BOT_FILL !== "0";
-const BACKFILL_MS = parseInt(process.env.MATCH_BACKFILL_MS || "12000", 10);
+const BACKFILL_MS = parseInt(process.env.MATCH_BACKFILL_MS || "22000", 10);
 // Mod başına oda boyutu: yazılı = 1-1 (2 kişi), sesli = tur odası, oyun = 2v2.
 const MODE_SIZE = { voice: 4, text: 2, game: 4 };
 const TARGET_SIZE = { voice: 3, text: 2, game: 4 }; // bot-fill hedefi
