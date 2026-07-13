@@ -93,9 +93,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Model yedekleme zinciri: birincil (flash-latest, 3.5) 503/aşırı yük verirse YEDEK modele
 // geçer. Yedek `gemini-pro-latest` = daha YÜKSEK kalite (alt sürüm değil). Her modelde retry.
 function modelChain() {
-  // Birincil (kaliteli) önce; 503/aşırı yükte sırayla YEDEKLER. Kapasiteli GA'lar sonda →
-  // en az biri kesin çalışır. Kalite hep önce denenir (flash-latest = 3.5 kalitesi).
-  const chain = [MODEL, "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
+  // Teşhis (2026-07): flash-latest/3.5-flash şu an 503 (Google aşırı yük), 2.x bu key'de 404.
+  // ÇALIŞAN + yüksek kalite: gemini-3-flash-preview (Gemini 3 Flash). Yedek: flash-lite.
+  // flash-latest önce denenir (Google düzelince otomatik ona döner), sonra çalışanlar.
+  const chain = [MODEL, "gemini-3-flash-preview", "gemini-flash-lite-latest"];
   return [...new Set(chain)];
 }
 // Pro modelleri thinkingBudget:0'ı reddeder (400) — o modelde bu alanı kaldır.
