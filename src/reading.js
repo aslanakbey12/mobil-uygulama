@@ -9,6 +9,21 @@ const DAILY_CAP = parseInt(process.env.READING_DAILY_CAP || "20", 10);
 
 export const readingConfigured = () => !!KEY;
 
+// Geçici teşhis: adaylarda GERÇEKTEN üretim yap, hangisi çalışıyor gör.
+export async function testModels() {
+  const cands = ["gemini-flash-latest", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-001", "gemini-2.5-pro", "gemini-flash-lite-latest", "gemini-3-flash-preview"];
+  const out = {};
+  for (const m of cands) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${KEY}`;
+    const t0 = Date.now();
+    try {
+      const r = await postGemini(url, { contents: [{ parts: [{ text: "Say OK" }] }], generationConfig: { maxOutputTokens: 10 } }, 25000);
+      out[m] = r.ok ? `OK ${Date.now() - t0}ms` : `HTTP ${r.status}`;
+    } catch (e) { out[m] = e?.name === "AbortError" ? "timeout" : String(e.message || e).slice(0, 30); }
+  }
+  return out;
+}
+
 // Geçici teşhis: bu projede generateContent destekleyen mevcut modelleri listele.
 export async function listModels() {
   if (!KEY) return ["no-key"];
