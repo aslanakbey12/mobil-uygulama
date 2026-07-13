@@ -46,7 +46,7 @@ Requirements:
 - Use EACH of these target words ${repeatFor(words.length)} times, in DIFFERENT sentences and natural contexts (varied forms allowed): ${words.join(", ")}.
 - Keep about 90-95% of the vocabulary at or below ${level}. Apart from the target words, introduce AT MOST 2-3 new or harder words — no rare/obscure vocabulary.
 - Then write exactly 3 multiple-choice comprehension questions in English (4 options, exactly one correct).
-- Also build a "glossary" of the 8-12 MOST useful words to learn from this passage (include all target words plus a few harder ones), each with: base form, Turkish meaning, CEFR level, and a very short English example.
+- Also build a "glossary" of 6-8 useful words from this passage (include the target words plus a couple of harder ones), each with: base form, Turkish meaning, CEFR level, and a very short English example.
 Return ONLY valid JSON with this exact shape and nothing else:
 {"title": string, "passage": string, "questions": [{"q": string, "options": [string, string, string, string], "answer": number}], "glossary": [{"en": string, "tr": string, "level": string, "ex": string}]}
 "answer" is the 0-based index of the correct option.`;
@@ -173,20 +173,19 @@ export async function generatePassage(level, words, opts = {}) {
     contents: [{ parts: [{ text: buildPrompt(level, words, opts) }] }],
     generationConfig: {
       responseMimeType: "application/json",
-      temperature: 0.85,
-      maxOutputTokens: 4096,  // passage + 3 soru + glossary sığsın (kesilme → parse hatası olurdu)
-      thinkingConfig: { thinkingBudget: 0 }, // düşünme kapalı: çıktı kesilmesin + hızlı/ucuz
+      temperature: 0.8,
+      maxOutputTokens: 3500,  // passage + 3 soru + glossary sığsın ama az çıktı = hızlı
+      thinkingConfig: { thinkingBudget: 0 }, // düşünme kapalı: hızlı/ucuz
     },
   };
-  // Her deneme 45sn zaman aşımlı; geçici hata VEYA parse hatasında tekrar dene
-  // (asla dakikalarca askıda kalma; kesilmiş JSON'da yeniden üret).
+  // Her deneme 60sn zaman aşımlı; 2 deneme (yavaş modelde dakikalarca bekletme).
   let out = null, lastErr = "";
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const r = await postGemini(url, body, 45000);
+      const r = await postGemini(url, body, 60000);
       if (!r.ok) {
         const bodyTxt = await r.text().catch(() => "");
-        if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 2) { await new Promise((res) => setTimeout(res, 900 * (attempt + 1))); continue; }
+        if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 1) { await new Promise((res) => setTimeout(res, 900 * (attempt + 1))); continue; }
         throw new Error(`HTTP ${r.status} ${bodyTxt.slice(0, 100)}`);
       }
       const data = await r.json();
@@ -199,8 +198,8 @@ export async function generatePassage(level, words, opts = {}) {
       out = cand;
       break;
     } catch (e) {
-      lastErr = String(e?.name === "AbortError" ? "zaman aşımı (45s)" : (e?.message || e));
-      if (attempt < 2) { await new Promise((res) => setTimeout(res, 800 * (attempt + 1))); continue; }
+      lastErr = String(e?.name === "AbortError" ? "zaman aşımı (60s)" : (e?.message || e));
+      if (attempt < 1) { await new Promise((res) => setTimeout(res, 800)); continue; }
     }
   }
   if (!out) throw new Error("Okuma oluşturulamadı → " + lastErr.slice(0, 150));
