@@ -9,6 +9,7 @@ import * as league from "./league.js";
 import * as game from "./game.js";
 import * as voiceroom from "./voiceroom.js";
 import * as reading from "./reading.js";
+import * as images from "./images.js";
 
 // Sesli tur odası klipleri ikili (binary) gelir — Fastify'a parser tanıt
 voiceroom.setBroadcaster((roomName, members, payload) => {
@@ -185,11 +186,13 @@ app.post("/reading/generate", async (req, reply) => {
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!reading.readingConfigured()) return reply.code(503).send({ error: "Okuma servisi yakında etkinleşecek." });
   if (!reading.underDailyCap(userId)) return reply.code(429).send({ error: "Bugünlük okuma hakkın doldu, yarın tekrar dene." });
-  const { level, words } = req.body || {};
+  const { level, words, knownSample, topic } = req.body || {};
   const list = Array.isArray(words) ? [...new Set(words.filter(Boolean).map(String))].slice(0, 8) : [];
+  const known = Array.isArray(knownSample) ? knownSample.filter(Boolean).map(String).slice(0, 15) : [];
+  const theme = String(topic || "").slice(0, 60);
   if (list.length < 3) return reply.code(400).send({ error: "Yeterli kelime yok. Önce Kelimeler'de birkaç kelime çalış." });
   try {
-    const passage = await reading.generatePassage(level || "B1", list);
+    const passage = await reading.generatePassage(level || "B1", list, { knownSample: known, topic: theme });
     reading.bumpDaily(userId);
     return { passage };
   } catch (e) {
@@ -207,6 +210,36 @@ app.post("/word/mnemonic", async (req, reply) => {
   try {
     const mnemonic = await reading.generateMnemonic(String(en).slice(0, 40), String(tr || "").slice(0, 80));
     return { mnemonic };
+  } catch (e) {
+    return reply.code(502).send({ error: String(e.message || e) });
+  }
+});
+
+// Kişiselleştirilmiş örnek cümle (seviye + ilgi/motive bağlamına göre; profil-önbellekli)
+app.post("/word/example", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!reading.readingConfigured()) return reply.code(503).send({ error: "AI servisi yakında etkinleşecek." });
+  const { en, tr, level, context } = req.body || {};
+  if (!en) return reply.code(400).send({ error: "kelime gerekli" });
+  try {
+    const example = await reading.generateExample(String(en).slice(0, 40), String(tr || "").slice(0, 80), String(level || "B1"), String(context || "").slice(0, 40));
+    return { example };
+  } catch (e) {
+    return reply.code(502).send({ error: String(e.message || e) });
+  }
+});
+
+// Kelime görseli (Pexels) — dual coding. Kelime bazında önbellekli.
+app.post("/word/image", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!images.imagesConfigured()) return reply.code(503).send({ error: "Görsel servisi yakında." });
+  const { en } = req.body || {};
+  if (!en) return reply.code(400).send({ error: "kelime gerekli" });
+  try {
+    const image = await images.fetchWordImage(String(en).slice(0, 40));
+    return { image };
   } catch (e) {
     return reply.code(502).send({ error: String(e.message || e) });
   }
