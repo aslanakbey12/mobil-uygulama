@@ -9,6 +9,19 @@ const DAILY_CAP = parseInt(process.env.READING_DAILY_CAP || "20", 10);
 
 export const readingConfigured = () => !!KEY;
 
+// Geçici teşhis: bu projede generateContent destekleyen mevcut modelleri listele.
+export async function listModels() {
+  if (!KEY) return ["no-key"];
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${KEY}&pageSize=200`);
+    if (!r.ok) return [`ERR ${r.status}`];
+    const d = await r.json();
+    return (d.models || [])
+      .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+      .map((m) => String(m.name).replace("models/", ""));
+  } catch (e) { return [String(e.message || e)]; }
+}
+
 const cache = new Map();       // `${level}|${words}` -> passage
 const CACHE_CAP = 500;
 const daily = new Map();       // userId -> { day, n }
