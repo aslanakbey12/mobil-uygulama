@@ -4,32 +4,33 @@
 const KEY = process.env.PEXELS_API_KEY || "";
 export const imagesConfigured = () => !!KEY;
 
-const cache = new Map();   // en(lower) -> { url, alt, photographer, photographer_url, pexels_url } | null
+const cache = new Map();   // en(lower) -> { photos: [{ url, photographer }] }
 const CACHE_CAP = 8000;
 
+// Kelime için birkaç aday foto döndür (kullanıcı alakasızsa değiştirebilsin).
 export async function fetchWordImage(en) {
   const q = String(en || "").trim().toLowerCase();
   if (!q) throw new Error("kelime gerekli");
   if (cache.has(q)) return cache.get(q);
   if (!KEY) throw new Error("Görsel servisi yapılandırılmadı.");
 
-  const url = `https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&per_page=1&orientation=landscape`;
+  const url = `https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&per_page=6&orientation=landscape`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
   let r;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    r = await fetch(url, { headers: { Authorization: KEY } });
-    if (r.ok) break;
-    if (r.status === 429 && attempt < 1) { await new Promise((res) => setTimeout(res, 600)); continue; }
-    throw new Error(`Görsel hatası (${r.status})`);
-  }
+  try {
+    r = await fetch(url, { headers: { Authorization: KEY }, signal: ctrl.signal });
+  } finally { clearTimeout(timer); }
+  if (!r.ok) throw new Error(`Görsel hatası (${r.status})`);
   const data = await r.json();
-  const photo = (data.photos || [])[0];
-  const out = photo ? {
-    url: photo.src?.medium || photo.src?.large || photo.src?.original || "",
-    alt: photo.alt || q,
-    photographer: photo.photographer || "",
-    photographer_url: photo.photographer_url || "",
-    pexels_url: photo.url || "",
-  } : null;
+  const photos = (data.photos || [])
+    .map((p) => ({
+      url: p.src?.large || p.src?.medium || p.src?.landscape || p.src?.original || "",
+      photographer: p.photographer || "",
+    }))
+    .filter((x) => x.url)
+    .slice(0, 5);
+  const out = { photos };
   if (cache.size >= CACHE_CAP) cache.delete(cache.keys().next().value);
   cache.set(q, out);
   return out;

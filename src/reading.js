@@ -52,6 +52,15 @@ Return ONLY valid JSON with this exact shape and nothing else:
 "answer" is the 0-based index of the correct option.`;
 }
 
+// Gemini isteği — zaman aşımlı (asla dakikalarca askıda kalma). ms sonra iptal.
+async function postGemini(url, body, ms = 30000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal });
+  } finally { clearTimeout(timer); }
+}
+
 // LLM bazen JSON'u ```json ...``` içinde ya da önüne/sonuna metin ekleyerek döndürür.
 function extractJson(txt) {
   let t = String(txt).trim();
@@ -104,7 +113,7 @@ export async function generateMnemonic(en, tr) {
   };
   let r;
   for (let attempt = 0; attempt < 3; attempt++) {
-    r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    r = await postGemini(url, body, 20000);
     if (r.ok) break;
     if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 2) { await new Promise((res) => setTimeout(res, 700 * (attempt + 1))); continue; }
     throw new Error(`AI hatası (${r.status})`);
@@ -139,7 +148,7 @@ Return ONLY JSON: {"en": string, "tr": string}`;
   };
   let r;
   for (let attempt = 0; attempt < 3; attempt++) {
-    r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    r = await postGemini(url, body, 20000);
     if (r.ok) break;
     if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 2) { await new Promise((res) => setTimeout(res, 700 * (attempt + 1))); continue; }
     throw new Error(`AI hatası (${r.status})`);
@@ -171,32 +180,30 @@ export async function generatePassage(level, words, opts = {}) {
   };
   // Her deneme 45sn zaman aşımlı; geçici hata VEYA parse hatasında tekrar dene
   // (asla dakikalarca askıda kalma; kesilmiş JSON'da yeniden üret).
-  let out = null;
+  let out = null, lastErr = "";
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 45000);
-      let r;
-      try {
-        r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal });
-      } finally { clearTimeout(timer); }
+      const r = await postGemini(url, body, 45000);
       if (!r.ok) {
+        const bodyTxt = await r.text().catch(() => "");
         if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 2) { await new Promise((res) => setTimeout(res, 900 * (attempt + 1))); continue; }
-        if (r.status === 503 || r.status === 429) throw new Error("AI şu an yoğun, birkaç saniye sonra tekrar dene.");
-        throw new Error(`AI hatası (${r.status})`);
+        throw new Error(`HTTP ${r.status} ${bodyTxt.slice(0, 100)}`);
       }
       const data = await r.json();
-      const txt = (data?.candidates?.[0]?.content?.parts || []).map((p) => p?.text || "").join("").trim();
-      if (!txt) throw new Error("AI boş yanıt döndü.");
+      const cand0 = data?.candidates?.[0];
+      const finish = cand0?.finishReason || "";
+      const txt = (cand0?.content?.parts || []).map((p) => p?.text || "").join("").trim();
+      if (!txt) throw new Error(`boş yanıt (finishReason: ${finish || "?"})`);
       const cand = normalize(JSON.parse(extractJson(txt)), level, words);
       if (!cand.passage || cand.questions.length === 0) throw new Error("eksik parça");
       out = cand;
       break;
     } catch (e) {
+      lastErr = String(e?.name === "AbortError" ? "zaman aşımı (45s)" : (e?.message || e));
       if (attempt < 2) { await new Promise((res) => setTimeout(res, 800 * (attempt + 1))); continue; }
     }
   }
-  if (!out) throw new Error("Okuma parçası şu an oluşturulamadı, birkaç saniye sonra tekrar dene.");
+  if (!out) throw new Error("Okuma oluşturulamadı → " + lastErr.slice(0, 150));
 
   if (cache.size >= CACHE_CAP) cache.delete(cache.keys().next().value);
   cache.set(cacheKey, out);
