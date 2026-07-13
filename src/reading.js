@@ -179,13 +179,14 @@ export async function generatePassage(level, words, opts = {}) {
     },
   };
   // Her deneme 60sn zaman aşımlı; 2 deneme (yavaş modelde dakikalarca bekletme).
+  // 4 deneme: 503/429 (geçici aşırı yük) → artan bekleme ile tekrar dene; timeout/parse → tekrar.
   let out = null, lastErr = "";
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      const r = await postGemini(url, body, 60000);
+      const r = await postGemini(url, body, 50000);
       if (!r.ok) {
         const bodyTxt = await r.text().catch(() => "");
-        if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 1) { await new Promise((res) => setTimeout(res, 900 * (attempt + 1))); continue; }
+        if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 3) { await new Promise((res) => setTimeout(res, 2000 * (attempt + 1))); continue; }
         throw new Error(`HTTP ${r.status} ${bodyTxt.slice(0, 100)}`);
       }
       const data = await r.json();
@@ -198,8 +199,8 @@ export async function generatePassage(level, words, opts = {}) {
       out = cand;
       break;
     } catch (e) {
-      lastErr = String(e?.name === "AbortError" ? "zaman aşımı (60s)" : (e?.message || e));
-      if (attempt < 1) { await new Promise((res) => setTimeout(res, 800)); continue; }
+      lastErr = String(e?.name === "AbortError" ? "zaman aşımı" : (e?.message || e));
+      if (attempt < 3) { await new Promise((res) => setTimeout(res, 1500)); continue; }
     }
   }
   if (!out) throw new Error("Okuma oluşturulamadı → " + lastErr.slice(0, 150));
