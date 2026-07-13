@@ -61,6 +61,41 @@ async function postGemini(url, body, ms = 30000) {
   } finally { clearTimeout(timer); }
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Model yedekleme zinciri: birincil (flash-latest, 3.5) 503/aşırı yük verirse YEDEK modele
+// geçer. Yedek `gemini-pro-latest` = daha YÜKSEK kalite (alt sürüm değil). Her modelde retry.
+function modelChain() {
+  const primary = MODEL;
+  const fb = process.env.GEMINI_FALLBACK || "gemini-pro-latest";
+  return primary === fb ? [primary] : [primary, fb];
+}
+// Gemini'yi model-yedekli + retry ile çağır, ham metni döndür. 503'te önce aynı modelde
+// birkaç kez, sonra yedek modelde dener → parça asla "high demand" yüzünden boş kalmaz.
+async function geminiText(body, { timeout = 30000, tries = 3 } = {}) {
+  let lastErr = "";
+  for (const model of modelChain()) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
+    for (let attempt = 0; attempt < tries; attempt++) {
+      try {
+        const r = await postGemini(url, body, timeout);
+        if (!r.ok) {
+          if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < tries - 1) { await sleep(1800 * (attempt + 1)); continue; }
+          lastErr = `HTTP ${r.status} (${model})`;
+          break; // bu model olmadı → sonraki modele geç
+        }
+        const cand0 = (await r.json())?.candidates?.[0];
+        const txt = (cand0?.content?.parts || []).map((p) => p?.text || "").join("").trim();
+        if (!txt) { lastErr = `boş yanıt ${cand0?.finishReason || ""} (${model})`; if (attempt < tries - 1) { await sleep(1200); continue; } break; }
+        return txt;
+      } catch (e) {
+        lastErr = e?.name === "AbortError" ? `zaman aşımı (${model})` : String(e?.message || e);
+        if (attempt < tries - 1) { await sleep(1500); continue; }
+      }
+    }
+  }
+  throw new Error(lastErr || "AI hatası");
+}
+
 // LLM bazen JSON'u ```json ...``` içinde ya da önüne/sonuna metin ekleyerek döndürür.
 function extractJson(txt) {
   let t = String(txt).trim();
@@ -106,23 +141,12 @@ export async function generateMnemonic(en, tr) {
   if (mnemoCache.has(key)) return mnemoCache.get(key);
   if (!KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const prompt = `Türk öğrenci için İngilizce "${en}" (Türkçe anlamı: ${tr}) kelimesini akılda tutmaya yardımcı, KISA (tek cümle, en fazla 20 kelime) yaratıcı bir hafıza kancası yaz. Kelimenin okunuşunu ya da görüntüsünü Türkçe bir çağrışımla anlamına bağla. SADECE Türkçe ipucu cümlesini yaz; tırnak, başlık veya açıklama ekleme.`;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: { temperature: 0.9, maxOutputTokens: 200, thinkingConfig: { thinkingBudget: 0 } },
   };
-  let r;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    r = await postGemini(url, body, 20000);
-    if (r.ok) break;
-    if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 2) { await new Promise((res) => setTimeout(res, 700 * (attempt + 1))); continue; }
-    throw new Error(`AI hatası (${r.status})`);
-  }
-  const data = await r.json();
-  const parts = data?.candidates?.[0]?.content?.parts || [];
-  let txt = parts.map((p) => p?.text || "").join("").trim().replace(/^["'“”]+|["'“”]+$/g, "");
+  let txt = (await geminiText(body, { timeout: 20000, tries: 2 })).replace(/^["'“”]+|["'“”]+$/g, "").slice(0, 300);
   if (!txt) throw new Error("AI boş yanıt döndü.");
-  txt = txt.slice(0, 300);
   if (mnemoCache.size >= 3000) mnemoCache.delete(mnemoCache.keys().next().value);
   mnemoCache.set(key, txt);
   return txt;
@@ -141,20 +165,11 @@ export async function generateExample(en, tr, level, context) {
 Context/topic: ${ctx}. Keep it short (max 14 words), natural, and make the word's meaning clear from context.
 Also give a Turkish translation of the sentence.
 Return ONLY JSON: {"en": string, "tr": string}`;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: { responseMimeType: "application/json", temperature: 0.8, maxOutputTokens: 200, thinkingConfig: { thinkingBudget: 0 } },
   };
-  let r;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    r = await postGemini(url, body, 20000);
-    if (r.ok) break;
-    if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 2) { await new Promise((res) => setTimeout(res, 700 * (attempt + 1))); continue; }
-    throw new Error(`AI hatası (${r.status})`);
-  }
-  const data = await r.json();
-  const txt = (data?.candidates?.[0]?.content?.parts || []).map((p) => p?.text || "").join("").trim();
+  const txt = await geminiText(body, { timeout: 20000, tries: 2 });
   let parsed; try { parsed = JSON.parse(extractJson(txt)); } catch (e) { throw new Error("AI yanıtı çözümlenemedi."); }
   const out = { en: String(parsed.en || "").slice(0, 200).trim(), tr: String(parsed.tr || "").slice(0, 200).trim() };
   if (!out.en) throw new Error("Örnek cümle üretilemedi.");
@@ -168,7 +183,6 @@ export async function generatePassage(level, words, opts = {}) {
   if (cache.has(cacheKey)) return cache.get(cacheKey);
   if (!KEY) throw new Error("Okuma servisi henüz yapılandırılmadı.");
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
   const body = {
     contents: [{ parts: [{ text: buildPrompt(level, words, opts) }] }],
     generationConfig: {
@@ -178,32 +192,15 @@ export async function generatePassage(level, words, opts = {}) {
       thinkingConfig: { thinkingBudget: 0 }, // düşünme kapalı: hızlı/ucuz
     },
   };
-  // Her deneme 60sn zaman aşımlı; 2 deneme (yavaş modelde dakikalarca bekletme).
-  // 4 deneme: 503/429 (geçici aşırı yük) → artan bekleme ile tekrar dene; timeout/parse → tekrar.
-  let out = null, lastErr = "";
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      const r = await postGemini(url, body, 50000);
-      if (!r.ok) {
-        const bodyTxt = await r.text().catch(() => "");
-        if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < 3) { await new Promise((res) => setTimeout(res, 2000 * (attempt + 1))); continue; }
-        throw new Error(`HTTP ${r.status} ${bodyTxt.slice(0, 100)}`);
-      }
-      const data = await r.json();
-      const cand0 = data?.candidates?.[0];
-      const finish = cand0?.finishReason || "";
-      const txt = (cand0?.content?.parts || []).map((p) => p?.text || "").join("").trim();
-      if (!txt) throw new Error(`boş yanıt (finishReason: ${finish || "?"})`);
-      const cand = normalize(JSON.parse(extractJson(txt)), level, words);
-      if (!cand.passage || cand.questions.length === 0) throw new Error("eksik parça");
-      out = cand;
-      break;
-    } catch (e) {
-      lastErr = String(e?.name === "AbortError" ? "zaman aşımı" : (e?.message || e));
-      if (attempt < 3) { await new Promise((res) => setTimeout(res, 1500)); continue; }
-    }
+  // Model-yedekli + retry (503'te birincilde birkaç kez, sonra pro-latest yedeğe geçer).
+  let out;
+  try {
+    const txt = await geminiText(body, { timeout: 55000, tries: 3 });
+    out = normalize(JSON.parse(extractJson(txt)), level, words);
+    if (!out.passage || out.questions.length === 0) throw new Error("eksik parça");
+  } catch (e) {
+    throw new Error("Okuma oluşturulamadı → " + String(e?.message || e).slice(0, 150));
   }
-  if (!out) throw new Error("Okuma oluşturulamadı → " + lastErr.slice(0, 150));
 
   out.key = cacheKey;   // istemci kaliteyi bu anahtarla oylar
   if (cache.size >= CACHE_CAP) cache.delete(cache.keys().next().value);
