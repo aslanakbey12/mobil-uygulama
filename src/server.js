@@ -215,18 +215,6 @@ app.post("/word/mnemonic", async (req, reply) => {
   }
 });
 
-// Geçici teşhis: her modelde deneme üretimi (hangisi çalışıyor)
-app.get("/reading/modeltest", async (req, reply) => {
-  try { return await reading.testModels(); }
-  catch (e) { return reply.code(502).send({ error: String(e.message || e) }); }
-});
-
-// Geçici teşhis: mevcut Gemini modellerini listele (auth'suz — sonra kaldırılacak)
-app.get("/reading/models", async (req, reply) => {
-  try { return { models: await reading.listModels() }; }
-  catch (e) { return reply.code(502).send({ error: String(e.message || e) }); }
-});
-
 // Okuma kalite geri bildirimi (👍/👎) — çok olumsuz alan parça önbellekten silinir
 app.post("/reading/rate", async (req, reply) => {
   const userId = getUserId(req);
