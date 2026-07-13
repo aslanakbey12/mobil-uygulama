@@ -78,9 +78,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Model yedekleme zinciri: birincil (flash-latest, 3.5) 503/aşırı yük verirse YEDEK modele
 // geçer. Yedek `gemini-pro-latest` = daha YÜKSEK kalite (alt sürüm değil). Her modelde retry.
 function modelChain() {
-  const primary = MODEL;
-  const fb = process.env.GEMINI_FALLBACK || "gemini-2.5-pro"; // yüksek kaliteli GA yedek
-  return primary === fb ? [primary] : [primary, fb];
+  // Birincil (kaliteli) önce; 503/aşırı yükte sırayla YEDEKLER. Kapasiteli GA'lar sonda →
+  // en az biri kesin çalışır. Kalite hep önce denenir (flash-latest = 3.5 kalitesi).
+  const chain = [MODEL, "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
+  return [...new Set(chain)];
 }
 // Pro modelleri thinkingBudget:0'ı reddeder (400) — o modelde bu alanı kaldır.
 function bodyFor(model, body) {
@@ -218,7 +219,7 @@ export async function generatePassage(level, words, opts = {}) {
   // Model-yedekli + retry (503'te birincilde birkaç kez, sonra pro-latest yedeğe geçer).
   let out;
   try {
-    const txt = await geminiText(body, { timeout: 55000, tries: 3 });
+    const txt = await geminiText(body, { timeout: 50000, tries: 2 });
     out = normalize(JSON.parse(extractJson(txt)), level, words);
     if (!out.passage || out.questions.length === 0) throw new Error("eksik parça");
   } catch (e) {
