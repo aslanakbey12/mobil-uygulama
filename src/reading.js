@@ -66,8 +66,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // geçer. Yedek `gemini-pro-latest` = daha YÜKSEK kalite (alt sürüm değil). Her modelde retry.
 function modelChain() {
   const primary = MODEL;
-  const fb = process.env.GEMINI_FALLBACK || "gemini-pro-latest";
+  const fb = process.env.GEMINI_FALLBACK || "gemini-2.5-pro"; // yüksek kaliteli GA yedek
   return primary === fb ? [primary] : [primary, fb];
+}
+// Pro modelleri thinkingBudget:0'ı reddeder (400) — o modelde bu alanı kaldır.
+function bodyFor(model, body) {
+  if (/pro/i.test(model) && body?.generationConfig?.thinkingConfig) {
+    const gc = { ...body.generationConfig };
+    delete gc.thinkingConfig;
+    return { ...body, generationConfig: gc };
+  }
+  return body;
 }
 // Gemini'yi model-yedekli + retry ile çağır, ham metni döndür. 503'te önce aynı modelde
 // birkaç kez, sonra yedek modelde dener → parça asla "high demand" yüzünden boş kalmaz.
@@ -75,9 +84,10 @@ async function geminiText(body, { timeout = 30000, tries = 3 } = {}) {
   let lastErr = "";
   for (const model of modelChain()) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
+    const mbody = bodyFor(model, body);
     for (let attempt = 0; attempt < tries; attempt++) {
       try {
-        const r = await postGemini(url, body, timeout);
+        const r = await postGemini(url, mbody, timeout);
         if (!r.ok) {
           if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < tries - 1) { await sleep(1800 * (attempt + 1)); continue; }
           lastErr = `HTTP ${r.status} (${model})`;
