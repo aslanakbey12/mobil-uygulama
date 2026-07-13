@@ -215,6 +215,16 @@ app.post("/word/mnemonic", async (req, reply) => {
   }
 });
 
+// Okuma kalite geri bildirimi (👍/👎) — çok olumsuz alan parça önbellekten silinir
+app.post("/reading/rate", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const { key, up } = req.body || {};
+  if (!key) return reply.code(400).send({ error: "key gerekli" });
+  const r = reading.rateReading(String(key).slice(0, 160), !!up);
+  return { ok: true, ...r };
+});
+
 // Kişiselleştirilmiş örnek cümle (seviye + ilgi/motive bağlamına göre; profil-önbellekli)
 app.post("/word/example", async (req, reply) => {
   const userId = getUserId(req);

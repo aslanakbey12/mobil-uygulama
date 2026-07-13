@@ -41,7 +41,7 @@ function buildPrompt(level, words, opts = {}) {
     : "";
   const topic = opts.topic ? `The passage MUST be about this topic/theme: ${opts.topic}.\n` : "";
   return `You are an English teacher creating graded reading practice for a Turkish learner. Target CEFR level: ${level}.
-${evidence}${topic}Write a coherent, engaging passage (about ${wordCountFor(level)} words) in natural English.
+${evidence}${topic}Write a coherent, engaging, well-structured passage (about ${wordCountFor(level)} words) in natural, idiomatic English — genuinely interesting to read (a mini-story, surprising fact, or vivid scene), so the learner enjoys it and improves. Avoid dull, list-like or textbook-style writing.
 Requirements:
 - Use EACH of these target words ${repeatFor(words.length)} times, in DIFFERENT sentences and natural contexts (varied forms allowed): ${words.join(", ")}.
 - Keep about 90-95% of the vocabulary at or below ${level}. Apart from the target words, introduce AT MOST 2-3 new or harder words — no rare/obscure vocabulary.
@@ -204,7 +204,24 @@ export async function generatePassage(level, words, opts = {}) {
   }
   if (!out) throw new Error("Okuma oluşturulamadı → " + lastErr.slice(0, 150));
 
+  out.key = cacheKey;   // istemci kaliteyi bu anahtarla oylar
   if (cache.size >= CACHE_CAP) cache.delete(cache.keys().next().value);
   cache.set(cacheKey, out);
   return out;
+}
+
+// Kalite geri bildirimi (kalabalık-kaynaklı kalite kontrolü). Bir parça yeterince
+// olumsuz oy alırsa önbellekten silinir → sonraki kullanıcıya YENİ parça üretilir.
+const readingFeedback = new Map(); // cacheKey -> { up, down }
+export function rateReading(key, up) {
+  if (!key) return { replaced: false };
+  const f = readingFeedback.get(key) || { up: 0, down: 0 };
+  if (up) f.up++; else f.down++;
+  readingFeedback.set(key, f);
+  if (f.down >= 3 && f.down > f.up) {           // eşik: 3+ olumsuz ve olumsuz > olumlu
+    cache.delete(key);                           // önbellekten çıkar → yeniden üretilir
+    readingFeedback.delete(key);
+    return { replaced: true };
+  }
+  return { replaced: false };
 }
