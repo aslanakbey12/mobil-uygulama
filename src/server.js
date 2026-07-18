@@ -253,6 +253,15 @@ app.post("/word/mnemonic", async (req, reply) => {
   }
 });
 
+// Kelime fotoğrafı oyu (👍/👎) — beğenilen foto herkes için öne çıkar, beğenilmeyen elenir
+app.post("/word/image/rate", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const { en, url, up } = req.body || {};
+  if (!en || !url) return reply.code(400).send({ error: "en ve url gerekli" });
+  return images.rateWordImage(String(en).slice(0, 60), String(url).slice(0, 500), !!up);
+});
+
 // Okuma kalite geri bildirimi (👍/👎) — çok olumsuz alan parça önbellekten silinir
 app.post("/reading/rate", async (req, reply) => {
   const userId = getUserId(req);
