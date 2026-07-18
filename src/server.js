@@ -43,6 +43,7 @@ function clientRoom(room) {
   return {
     name: room.name, level: room.level, mode: room.mode || "voice", topic: room.topic,
     focusWords: room.focusWords || [],
+    ai: room.ai ? { name: room.ai.name } : undefined,
     members: room.members.map((m) => ({ name: m.name })), size: room.members.length
   };
 }
@@ -90,11 +91,33 @@ function seedBotChat(room) {
 
 // Oda kurulunca eşleşen herkese anlık "matched" bildir (+ moda göre kur & botları sürükle)
 mm.onMatch((room) => {
+  // Yazılı odada bot varsa (gerçek eşleşme bulunamadı) → gerçek AI sohbetine çevir
+  if (room.mode === "text") {
+    const bot = room.members.find((m) => m.bot);
+    if (bot && chatAI.chatConfigured()) {
+      room.ai = { name: bot.name, id: bot.userId };
+      room.aiHistory = [];
+    }
+  }
   if (room.mode === "game") game.createGame(room);
   if (room.mode === "voice") voiceroom.createVoiceRoom(room);
   for (const m of room.members) sockets.push(m.userId, { type: "matched", room: clientRoom(room) });
   if (room.mode === "game") { broadcastGame(room); driveGameBots(room); }
   if (room.mode === "voice") { broadcastVoice(room); voiceroom.maybeBotTurn(voiceroom.getVoiceRoom(room.name)); }
+  if (room.mode === "text") {
+    if (room.ai) {
+      const human = room.members.find((m) => !m.bot);
+      chatAI.generateOpener(room.focusWords, room.level, room.ai.name)
+        .then((op) => {
+          if (!op || !getRoom(room.name) || !human) return;
+          room.aiHistory.push({ mine: false, text: op });
+          sockets.push(human.userId, { type: "chat", from: room.ai.id, name: room.ai.name, text: op, ts: Date.now(), ai: true });
+        })
+        .catch(() => {});
+    } else {
+      seedBotChat(room);  // AI yapılandırılmamışsa eski hazır mesajlar
+    }
+  }
   if (room.mode === "text") seedBotChat(room);
 });
 
