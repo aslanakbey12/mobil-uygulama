@@ -10,6 +10,7 @@ import * as game from "./game.js";
 import * as voiceroom from "./voiceroom.js";
 import * as reading from "./reading.js";
 import * as images from "./images.js";
+import * as chatAI from "./chat_ai.js";
 
 // Sesli tur odası klipleri ikili (binary) gelir — Fastify'a parser tanıt
 voiceroom.setBroadcaster((roomName, members, payload) => {
@@ -21,7 +22,7 @@ import { supaConfigured, supa } from "./supabase.js";
 import { isPremium, setPremium } from "./entitlements.js";
 import { canEnterRoom, recordRoomEntry, roomsUsedToday, freeDailyLimit } from "./quota.js";
 import { pickTopic } from "./topics.js";
-import { getRoom, roomStats, leaveRoom, createHostedRoom, getRoomByCode, addMember } from "./rooms.js";
+import { getRoom, roomStats, leaveRoom, createHostedRoom, getRoomByCode, addMember, createAiRoom } from "./rooms.js";
 
 const app = Fastify({ logger: true });
 
@@ -119,6 +120,20 @@ app.register(async function (appWs) {
         if (!text) return;
         const payload = { type: "chat", from: userId, name: me.name, text, ts: Date.now() };
         for (const m of room.members) sockets.push(m.userId, payload);
+        // AI odasıysa: geçmişi güncelle + AI yanıtı üret, "yazıyor…" göster, sonra push
+        if (room.ai && chatAI.chatConfigured()) {
+          room.aiHistory = room.aiHistory || [];
+          room.aiHistory.push({ mine: true, text });
+          sockets.push(userId, { type: "typing", name: room.ai.name });
+          chatAI.generateReply(room.aiHistory, room.focusWords, room.level, room.ai.name)
+            .then((reply) => {
+              if (!reply || !getRoom(room.name)) return; // oda kapandıysa geç
+              room.aiHistory.push({ mine: false, text: reply });
+              if (room.aiHistory.length > 20) room.aiHistory = room.aiHistory.slice(-20);
+              sockets.push(userId, { type: "chat", from: room.ai.id, name: room.ai.name, text: reply, ts: Date.now(), ai: true });
+            })
+            .catch(() => sockets.push(userId, { type: "typing_stop" }));
+        }
         return;
       }
 
@@ -394,6 +409,25 @@ app.post("/rooms/create", async (req, reply) => {
   const focusWords = Array.isArray(pool) ? pool.slice(0, 12) : [];
   const room = createHostedRoom({ host: { userId, name }, level: level || "B1", topic, mode, focusWords });
   return { room: { name: room.name, level: room.level, mode: room.mode, topic: room.topic, focusWords: room.focusWords, code: room.code, members: room.members.map(m => ({ name: m.name })), size: room.members.length } };
+});
+
+// AI konuşma partneri odası (AÇIK): kullanıcının seçtiği kelimelerle AI sohbet başlatır.
+const AI_BOT_NAMES = ["Alex", "Emma", "Leo", "Mia", "Sam", "Nora", "Kai", "Lucy"];
+app.post("/rooms/ai", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!chatAI.chatConfigured()) return reply.code(503).send({ error: "AI sohbet yakında etkinleşecek." });
+  const { level, name, words } = req.body || {};
+  const focusWords = Array.isArray(words) ? [...new Set(words.filter(Boolean).map(String))].slice(0, 4) : [];
+  const botName = AI_BOT_NAMES[Math.floor(Math.random() * AI_BOT_NAMES.length)];
+  const room = createAiRoom({ user: { userId, name: name || "Sen" }, level: level || "B1", focusWords, botName });
+  let opener = "";
+  try { opener = await chatAI.generateOpener(focusWords, level || "B1", botName); } catch (_) {}
+  room.aiHistory = opener ? [{ mine: false, text: opener }] : [];
+  return {
+    room: { name: room.name, level: room.level, mode: "text", focusWords: room.focusWords, ai: { name: botName }, members: [{ name: name || "Sen" }], size: 1 },
+    opener: opener ? { name: botName, text: opener } : null,
+  };
 });
 
 // Davet koduyla odaya katıl (ücretsiz kullanıcılar da katılabilir)

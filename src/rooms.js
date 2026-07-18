@@ -36,6 +36,18 @@ export function createHostedRoom({ host, level, topic, mode, focusWords }) {
   return room;
 }
 
+// AI konuşma partneri odası (AÇIK): tek gerçek kullanıcı + AI üye. Kullanıcının
+// seçtiği kelimelerle AI sohbet başlatır. focusWords = seçilen kelimeler.
+export function createAiRoom({ user, level, focusWords, botName, topic }) {
+  const room = createRoom({
+    level, mode: "text", topic: topic || {},
+    focusWords: Array.isArray(focusWords) ? focusWords : [],
+    members: [{ userId: user.userId, name: user.name }],
+  });
+  room.ai = { name: botName, id: "ai_" + room.name };
+  return room;
+}
+
 export function getRoomByCode(code) {
   const name = codes.get(String(code));
   return name ? rooms.get(name) || null : null;

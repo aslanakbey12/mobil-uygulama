@@ -110,7 +110,7 @@ function bodyFor(model, body) {
 }
 // Gemini'yi model-yedekli + retry ile çağır, ham metni döndür. 503'te önce aynı modelde
 // birkaç kez, sonra yedek modelde dener → parça asla "high demand" yüzünden boş kalmaz.
-async function geminiText(body, { timeout = 30000, tries = 3 } = {}) {
+export async function geminiText(body, { timeout = 30000, tries = 3 } = {}) {
   let lastErr = "";
   for (const model of modelChain()) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
