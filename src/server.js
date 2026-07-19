@@ -462,6 +462,22 @@ app.post("/rooms/ai", async (req, reply) => {
   };
 });
 
+// Sohbet sonrası ders özeti (AI): kullanılan hedef kelimeler + düzeltmeler + övgü
+app.post("/chat/recap", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!chatAI.chatConfigured()) return { recap: null };
+  const { messages, words, level } = req.body || {};
+  const msgs = Array.isArray(messages) ? messages.slice(-20) : [];
+  if (!msgs.some((m) => m && m.mine)) return { recap: null }; // öğrenci hiç yazmamış
+  try {
+    const recap = await chatAI.generateRecap(msgs, Array.isArray(words) ? words : [], String(level || "B1"));
+    return { recap };
+  } catch (e) {
+    return { recap: null }; // özet üretilemedi → çıkışı bloklama, sessizce geç
+  }
+});
+
 // Davet koduyla odaya katıl (ücretsiz kullanıcılar da katılabilir)
 app.post("/rooms/join", async (req, reply) => {
   const userId = getUserId(req);

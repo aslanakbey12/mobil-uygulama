@@ -137,7 +137,7 @@ export async function geminiText(body, { timeout = 30000, tries = 3 } = {}) {
 }
 
 // LLM bazen JSON'u ```json ...``` içinde ya da önüne/sonuna metin ekleyerek döndürür.
-function extractJson(txt) {
+export function extractJson(txt) {
   let t = String(txt).trim();
   t = t.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
   const first = t.indexOf("{");
