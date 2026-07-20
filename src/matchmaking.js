@@ -136,8 +136,9 @@ function tryForm(level, mode) {
     if (chosen.length >= MIN) { removeMembers(chosen); return form(chosen[0].level, mode, chosen); }
   }
 
-  // Bot-fill: en eski gerçek oyuncu 45sn bekledi ve hâlâ gerçek eşleşme yok → botlarla başlat
-  if (BOT_FILL && Date.now() - seed.joinedAt >= BACKFILL_MS) {
+  // Bot-fill: en eski gerçek oyuncu 45sn bekledi ve hâlâ gerçek eşleşme yok → botlarla başlat.
+  // YAZILI modda KAPALI: gerçek kişi bulunamazsa istemci "AI ile pratik yap" önerir (bota düşme yok).
+  if (BOT_FILL && mode !== "text" && Date.now() - seed.joinedAt >= BACKFILL_MS) {
     const target = TARGET_SIZE[mode] || 2;
     const real = pool.slice(0, target);
     const members = [...real];
