@@ -25,9 +25,9 @@ function buildGridWords(memberPools, size) {
 
 export function createGame(room) {
   const pools = (room.memberPools || []).map(m => m.pool);
-  const words = buildGridWords(pools, 25);
+  const words = buildGridWords(pools, 16);   // 4×4 ızgara
   const n = words.length;
-  const redCount = Math.max(2, Math.round(n * 0.34));  // başlayan takım (25 → ~8-9)
+  const redCount = Math.max(2, Math.round(n * 0.34));  // başlayan takım (16 → ~5)
   const blueCount = Math.max(1, redCount - 1);
   const neutral = Math.max(0, n - redCount - blueCount - 1);
 
