@@ -97,6 +97,14 @@ function mergedWaiters(level, mode) {
   list.sort((a, b) => a.joinedAt - b.joinedAt);
   return list;
 }
+// Tüm seviyelerden bekleyenler (düşük likidite / zaman aşımı → seviye şartını kaldır,
+// kimse boş kalmasın). Az kullanıcıyla bile farklı seviyeden iki kişi eşleşebilsin.
+function allWaiters(mode) {
+  let list = [];
+  for (const lv of LEVELS) { const q = queues.get(qKey(lv, mode)); if (q && q.length) list = list.concat(q); }
+  list.sort((a, b) => a.joinedAt - b.joinedAt);
+  return list;
+}
 // Her üyeyi KENDİ seviye kuyruğundan çıkar (birleşik havuz farklı kuyruklardan gelir).
 function removeMembers(members) {
   for (const m of members) {
@@ -110,8 +118,25 @@ function tryForm(level, mode) {
   const pool = mergedWaiters(level, mode);
   if (pool.length === 0) return;
   const seed = pool[0];
+  const ideal = idealFor(mode);   // yazılı=2 (1-1), sesli/oyun=4
+  const relaxed = Date.now() - seed.joinedAt >= RELAX_MS;
 
-  // Bot-fill: en eski gerçek oyuncu yeterince bekledi → botlarla doldurup başlat
+  // Yeterli kişi birikti (komşu seviyeler): örtüşme eşiğiyle hemen grupla
+  if (pool.length >= MIN && pool.length >= ideal) {
+    const chosen = pickByOverlap(pool, ideal, relaxed ? 0 : OVERLAP_MIN);
+    if (chosen.length >= MIN) { removeMembers(chosen); return form(seed.level, mode, chosen); }
+  }
+
+  // 20sn+ beklendi → seviye VE örtüşme şartını kaldır, TÜM seviyelerden kim varsa eşleştir.
+  // (Farklı seviyedeki iki arkadaş da eşleşsin; az kullanıcıda likidite. Bot-fill'den ÖNCE
+  // dener ki gerçek insan varsa bota düşmesin.)
+  if (relaxed) {
+    const wide = allWaiters(mode);
+    const chosen = pickByOverlap(wide, Math.min(ideal, wide.length), 0);
+    if (chosen.length >= MIN) { removeMembers(chosen); return form(chosen[0].level, mode, chosen); }
+  }
+
+  // Bot-fill: en eski gerçek oyuncu 45sn bekledi ve hâlâ gerçek eşleşme yok → botlarla başlat
   if (BOT_FILL && Date.now() - seed.joinedAt >= BACKFILL_MS) {
     const target = TARGET_SIZE[mode] || 2;
     const real = pool.slice(0, target);
@@ -124,22 +149,6 @@ function tryForm(level, mode) {
     }
     removeMembers(real);
     return form(seed.level, mode, members);
-  }
-
-  if (pool.length < MIN) return;
-  const ideal = idealFor(mode);   // yazılı=2 (1-1), sesli/oyun=4
-  const relaxed = Date.now() - seed.joinedAt >= RELAX_MS;
-
-  // Mod boyutu kadar kişi birikince: örtüşme eşiğiyle hemen grupla
-  if (pool.length >= ideal) {
-    const chosen = pickByOverlap(pool, ideal, relaxed ? 0 : OVERLAP_MIN);
-    if (chosen.length >= MIN) { removeMembers(chosen); return form(seed.level, mode, chosen); }
-  }
-
-  // Zaman aşımı: örtüşme şartını kaldır, MIN ile kur (kimse takılı kalmasın)
-  if (relaxed) {
-    const chosen = pickByOverlap(pool, Math.min(ideal, pool.length), 0);
-    if (chosen.length >= MIN) { removeMembers(chosen); return form(seed.level, mode, chosen); }
   }
 }
 
