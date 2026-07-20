@@ -228,7 +228,7 @@ app.post("/reading/generate", async (req, reply) => {
   const list = Array.isArray(words) ? [...new Set(words.filter(Boolean).map(String))].slice(0, 8) : [];
   const known = Array.isArray(knownSample) ? knownSample.filter(Boolean).map(String).slice(0, 15) : [];
   const theme = String(topic || "").slice(0, 60);
-  if (list.length < 3) return reply.code(400).send({ error: "Yeterli kelime yok. Önce Kelimeler'de birkaç kelime çalış." });
+  if (list.length < 1) return reply.code(400).send({ error: "Yeterli kelime yok. Önce Kelimeler'de birkaç kelime çalış." });
   try {
     const passage = await reading.generatePassage(level || "B1", list, { knownSample: known, topic: theme });
     reading.bumpDaily(userId);
