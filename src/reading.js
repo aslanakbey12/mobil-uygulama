@@ -136,6 +136,35 @@ export async function geminiText(body, { timeout = 30000, tries = 3 } = {}) {
   throw new Error(lastErr || "AI hatası");
 }
 
+// Kesik (truncate edilmiş) JSON'u onar: sondan geriye her '}' / ']' noktasında kes,
+// açık kalan parantezleri kapatıp parse etmeyi dene → yarım kalan son öğe atılır,
+// gerisi kurtarılır (ör. glossary'nin son elemanı eksik olsa da parça + sorular gelir).
+function neededClosers(s) {
+  let inStr = false, esc = false; const st = [];
+  for (const ch of s) {
+    if (esc) { esc = false; continue; }
+    if (ch === "\\") { if (inStr) esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === "{") st.push("}");
+    else if (ch === "[") st.push("]");
+    else if (ch === "}" || ch === "]") { if (st.pop() !== ch) return null; }
+  }
+  if (inStr) return null;
+  return st.reverse().join("");
+}
+export function repairJson(t) {
+  for (let cut = t.length; cut > 1; cut--) {
+    const c = t[cut - 1];
+    if (c !== "}" && c !== "]") continue;
+    const cand = t.slice(0, cut);
+    const closers = neededClosers(cand);
+    if (closers == null) continue;
+    try { return JSON.parse(cand + closers); } catch (e) {}
+  }
+  throw new Error("JSON onarılamadı");
+}
+
 // LLM bazen JSON'u ```json ...``` içinde ya da önüne/sonuna metin ekleyerek döndürür.
 export function extractJson(txt) {
   let t = String(txt).trim();
@@ -236,7 +265,12 @@ export async function generatePassage(level, words, opts = {}) {
   let out;
   try {
     const txt = await geminiText(body, { timeout: 50000, tries: 2 });
-    out = normalize(JSON.parse(extractJson(txt)), level, words);
+    const clean = extractJson(txt);
+    // Gemini çıktısı token sınırında kesilebilir → JSON yarım kalır (örn. glossary'nin
+    // son öğesi eksik). Önce düz parse, olmazsa onar (yarım son öğe atılır, gerisi kurtarılır).
+    let parsed;
+    try { parsed = JSON.parse(clean); } catch (e) { parsed = repairJson(clean); }
+    out = normalize(parsed, level, words);
     if (!out.passage || out.questions.length === 0) throw new Error("eksik parça");
   } catch (e) {
     throw new Error("Okuma oluşturulamadı → " + String(e?.message || e).slice(0, 150));
