@@ -23,8 +23,8 @@ const FOCUS_CAP = 12;         // odaya yazılacak odak kelime sayısı
 const BOT_FILL = process.env.MATCH_BOT_FILL !== "0";
 const BACKFILL_MS = parseInt(process.env.MATCH_BACKFILL_MS || "45000", 10);
 // Mod başına oda boyutu: yazılı = 1-1 (2 kişi), sesli = tur odası, oyun = 2v2.
-const MODE_SIZE = { voice: 4, text: 2, game: 4 };
-const TARGET_SIZE = { voice: 3, text: 2, game: 4 }; // bot-fill hedefi
+const MODE_SIZE = { voice: 2, text: 2, game: 4 };   // sesli: 2 kişi de yeter (illa 4 değil)
+const TARGET_SIZE = { voice: 2, text: 2, game: 4 }; // bot-fill hedefi
 const idealFor = (mode) => MODE_SIZE[mode] || IDEAL;
 const BOT_NAMES = ["Ada", "Kaan", "Ela", "Deniz", "Mert", "Nil", "Efe", "Zeynep", "Aylin", "Poyraz"];
 

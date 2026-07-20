@@ -13,7 +13,7 @@ export function createRoom({ level, topic, members, mode, focusWords, memberPool
   const room = {
     name: roomName,
     level,
-    mode: m,                     // "voice" (sesli) | "text" (yazılı) | "game" (Kelime Dedektifi)
+    mode: m,                     // "voice" (sesli) | "text" (yazılı) | "game" (Kelime Casusu)
     topic,                       // { id, text, minLevel }
     focusWords: Array.isArray(focusWords) ? focusWords : [], // grubun ortak eksik kelimeleri
     memberPools,                 // oyun modunda: [{ userId, name, pool:[{en,w}] }]

@@ -48,7 +48,7 @@ function clientRoom(room) {
   };
 }
 
-// Kelime Dedektifi: odadaki herkese kişiye özel oyun durumunu yayınla (roller gizli)
+// Kelime Casusu: odadaki herkese kişiye özel oyun durumunu yayınla (roller gizli)
 function broadcastGame(room) {
   const g = game.getGame(room.name);
   if (!g) return;
@@ -115,10 +115,9 @@ mm.onMatch((room) => {
         })
         .catch(() => {});
     } else {
-      seedBotChat(room);  // AI yapılandırılmamışsa eski hazır mesajlar
+      seedBotChat(room);  // AI yapılandırılmamışsa eski hazır mesajlar (yazılıda artık bot yok → no-op)
     }
   }
-  if (room.mode === "text") seedBotChat(room);
 });
 
 // WebSocket rotası: istemci ?userId=&token= ile bağlanır, push alır
@@ -160,7 +159,7 @@ app.register(async function (appWs) {
         return;
       }
 
-      // Kelime Dedektifi
+      // Kelime Casusu
       if (room.mode === "game") {
         if (msg.type === "game_join") {
           let g = game.getGame(room.name) || game.createGame(room);

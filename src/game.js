@@ -1,4 +1,4 @@
-// Kelime Dedektifi — gizli kelime takım oyunu (2 takım: kırmızı/mavi, sabit roller, kelime+sayı ipucu).
+// Kelime Casusu — gizli kelime takım oyunu (2 takım: kırmızı/mavi, sabit roller, kelime+sayı ipucu).
 // Izgara üyelerin BİLDİĞİ kelimelerden kurulur. Her takımda 1 spymaster (renkleri görür, ipucu verir)
 // + operative(ler) (kartları açar). Roller TÜM OYUN boyunca sabittir.
 // AI yok → bot operative kendi ajanını açar, bot spymaster jeton ipucu verir (kelime AI/insanla anlam kazanır).
