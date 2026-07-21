@@ -527,6 +527,7 @@ app.post("/friends/add", async (req, reply) => {
   const { data: fc } = await db.from("friend_codes").select("user_id, name").eq("code", code).maybeSingle();
   if (!fc) return reply.code(404).send({ error: "Bu kod bulunamadı." });
   if (fc.user_id === userId) return reply.code(400).send({ error: "Kendini ekleyemezsin 🙂" });
+  if (mod.areBlocked(userId, fc.user_id)) return reply.code(403).send({ error: "Bu kullanıcıyla bağlantı kurulamıyor." });
   await db.from("friendships").upsert([
     { user_id: userId, friend_id: fc.user_id },
     { user_id: fc.user_id, friend_id: userId },
@@ -561,6 +562,21 @@ app.post("/friends/remove", async (req, reply) => {
   return { ok: true };
 });
 
+// Arkadaşı engelle: arkadaşlığı sil + kalıcı engel (davet/ekleme/eşleşme kapanır)
+app.post("/friends/block", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const fid = String(req.body?.friendId || "");
+  if (!fid) return reply.code(400).send({ error: "friendId gerekli" });
+  mod.block(userId, fid);   // kalıcı engel (bellek + blocks tablosu) — areBlocked her yerde kontrol eder
+  const db = supa();
+  if (db) {
+    await db.from("friendships").delete().eq("user_id", userId).eq("friend_id", fid);
+    await db.from("friendships").delete().eq("user_id", fid).eq("friend_id", userId);
+  }
+  return { ok: true };
+});
+
 // Arkadaşı odaya davet et: oda kur + davet kaydı (karşı taraf Sosyal'de görür)
 app.post("/friends/invite", async (req, reply) => {
   const userId = getUserId(req);
@@ -569,6 +585,7 @@ app.post("/friends/invite", async (req, reply) => {
   if (!db) return reply.code(503).send({ error: "Arkadaş sistemi yakında." });
   const { friendId, name, level, mode } = req.body || {};
   if (!friendId) return reply.code(400).send({ error: "friendId gerekli" });
+  if (mod.areBlocked(userId, friendId)) return reply.code(403).send({ error: "Bu kullanıcıya davet gönderilemez." });
   const m = mode === "voice" ? "voice" : "text";
   const topic = pickTopic(level || "B1");
   const room = createHostedRoom({ host: { userId, name: name || "Arkadaşın" }, level: level || "B1", topic, mode: m, focusWords: [] });
