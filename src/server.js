@@ -490,6 +490,116 @@ app.post("/rooms/join", async (req, reply) => {
   return { room: { name: room.name, level: room.level, topic: room.topic, members: room.members.map(m => ({ name: m.name })), size: room.members.length } };
 });
 
+// ── 👥 Arkadaş sistemi (basit kodla-ekle; onay yok) ──────────────────
+function genFriendCode() {
+  const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // karışan harfler (I/O/0/1) yok
+  let s = ""; for (let i = 0; i < 6; i++) s += A[Math.floor(Math.random() * A.length)];
+  return s;
+}
+
+// Kalıcı arkadaş kodunu al/oluştur (+ görünen adı güncelle)
+app.post("/friends/code", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return reply.code(503).send({ error: "Arkadaş sistemi yakında." });
+  const name = String(req.body?.name || "").slice(0, 40);
+  const { data: ex } = await db.from("friend_codes").select("code").eq("user_id", userId).maybeSingle();
+  if (ex?.code) { await db.from("friend_codes").update({ name }).eq("user_id", userId); return { code: ex.code, name }; }
+  let code;
+  for (let i = 0; i < 8; i++) {
+    code = genFriendCode();
+    const { data: taken } = await db.from("friend_codes").select("user_id").eq("code", code).maybeSingle();
+    if (!taken) break;
+  }
+  await db.from("friend_codes").insert({ user_id: userId, code, name });
+  return { code, name };
+});
+
+// Kodla arkadaş ekle (çift yönlü yazılır)
+app.post("/friends/add", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return reply.code(503).send({ error: "Arkadaş sistemi yakında." });
+  const code = String(req.body?.code || "").trim().toUpperCase();
+  if (!code) return reply.code(400).send({ error: "kod gerekli" });
+  const { data: fc } = await db.from("friend_codes").select("user_id, name").eq("code", code).maybeSingle();
+  if (!fc) return reply.code(404).send({ error: "Bu kod bulunamadı." });
+  if (fc.user_id === userId) return reply.code(400).send({ error: "Kendini ekleyemezsin 🙂" });
+  await db.from("friendships").upsert([
+    { user_id: userId, friend_id: fc.user_id },
+    { user_id: fc.user_id, friend_id: userId },
+  ], { onConflict: "user_id,friend_id", ignoreDuplicates: true });
+  return { friend: { id: fc.user_id, name: fc.name || "Arkadaş" } };
+});
+
+// Arkadaş listesi (adlarıyla)
+app.get("/friends", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return { friends: [] };
+  const { data: rows } = await db.from("friendships").select("friend_id").eq("user_id", userId);
+  const ids = (rows || []).map(r => r.friend_id);
+  if (!ids.length) return { friends: [] };
+  const { data: names } = await db.from("friend_codes").select("user_id, name").in("user_id", ids);
+  const nameOf = Object.fromEntries((names || []).map(n => [n.user_id, n.name]));
+  return { friends: ids.map(id => ({ id, name: nameOf[id] || "Arkadaş" })) };
+});
+
+// Arkadaşı çıkar (çift yönlü)
+app.post("/friends/remove", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return reply.code(503).send({ error: "yok" });
+  const fid = String(req.body?.friendId || "");
+  if (!fid) return reply.code(400).send({ error: "friendId gerekli" });
+  await db.from("friendships").delete().eq("user_id", userId).eq("friend_id", fid);
+  await db.from("friendships").delete().eq("user_id", fid).eq("friend_id", userId);
+  return { ok: true };
+});
+
+// Arkadaşı odaya davet et: oda kur + davet kaydı (karşı taraf Sosyal'de görür)
+app.post("/friends/invite", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return reply.code(503).send({ error: "Arkadaş sistemi yakında." });
+  const { friendId, name, level, mode } = req.body || {};
+  if (!friendId) return reply.code(400).send({ error: "friendId gerekli" });
+  const m = mode === "voice" ? "voice" : "text";
+  const topic = pickTopic(level || "B1");
+  const room = createHostedRoom({ host: { userId, name: name || "Arkadaşın" }, level: level || "B1", topic, mode: m, focusWords: [] });
+  await db.from("room_invites").insert({ to_user: friendId, from_name: name || "Arkadaşın", room_code: room.code, mode: m });
+  return { room: { name: room.name, level: room.level, mode: room.mode, topic: room.topic, code: room.code, members: room.members.map(x => ({ name: x.name })), size: room.members.length } };
+});
+
+// Bekleyen davetler (son 3 dk) — Sosyal'de banner
+app.get("/friends/invites", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return { invites: [] };
+  const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+  const { data } = await db.from("room_invites").select("id, from_name, room_code, mode")
+    .eq("to_user", userId).gt("created_at", since).order("created_at", { ascending: false }).limit(5);
+  return { invites: data || [] };
+});
+
+// Daveti temizle (katılınca/reddedince)
+app.post("/friends/invites/clear", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return { ok: true };
+  const id = req.body?.id;
+  if (id) await db.from("room_invites").delete().eq("id", id).eq("to_user", userId);
+  else await db.from("room_invites").delete().eq("to_user", userId);
+  return { ok: true };
+});
+
 // RevenueCat webhook → premium durumunu güncelle
 // (RevenueCat'te app_user_id = Supabase user id olacak şekilde ayarla)
 app.post("/webhooks/revenuecat", async (req, reply) => {
