@@ -60,17 +60,22 @@ function advanceTurn(vr) {
   if (vr.turnIdx === 0) vr.round++;
   vr.phase = "speaking";
   bc(vr, { type: "vr_state", state: stateFor(vr) });
-  maybeBotTurn(vr);
+  armTurnTimer(vr);
 }
 
-// Sıra bir bota gelirse kısa süre sonra otomatik pas (akış kilitlenmesin).
-export function maybeBotTurn(vr) {
+// Sıra gelen kişiye zaman aşımı kur: BOT → kısa (otomatik pas), İNSAN → uzun.
+// İnsan konuşmacı hiçbir şey yapmazsa (mikrofon reddi/çökme/ağ) oda DONMASIN diye
+// süre dolunca otomatik ilerler. (Önceden sadece botlara timer vardı → oda kilitleniyordu.)
+export function armTurnTimer(vr) {
+  if (!vr || vr.status !== "active" || vr.phase !== "speaking") return;
   const sp = vr.members.find(m => m.userId === currentSpeaker(vr));
-  if (sp && sp.bot && vr.status === "active" && vr.phase === "speaking") {
-    if (vr.timer) clearTimeout(vr.timer);
-    vr.timer = setTimeout(() => { if (vr.status === "active") advanceTurn(vr); }, 2600);
-  }
+  if (!sp) return;
+  if (vr.timer) clearTimeout(vr.timer);
+  const ms = sp.bot ? 2600 : MAX_TURN_MS + 8000; // insan: 60sn tur + 8sn tampon
+  vr.timer = setTimeout(() => { if (vr.status === "active") advanceTurn(vr); }, ms);
 }
+// Geriye dönük ad (server.js/onMatch çağırıyor)
+export function maybeBotTurn(vr) { armTurnTimer(vr); }
 
 // Konuşan klibini yükledi → herkese oynat, klip süresi kadar sonra sıra ilerle.
 export function onClip(vr, userId, clipId, durationMs) {
