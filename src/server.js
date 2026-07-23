@@ -183,6 +183,8 @@ app.register(async function (appWs) {
       if (room.mode === "voice") {
         const vr = voiceroom.getVoiceRoom(room.name) || voiceroom.createVoiceRoom(room);
         if (msg.type === "vr_join") {
+          const me = room.members.find((m) => m.userId === userId);
+          voiceroom.ensureMember(vr, { userId, name: me?.name });  // özel odada sonradan gelen sıraya eklensin
           sockets.push(userId, { type: "vr_state", state: voiceroom.stateFor(vr) });
           return;
         }
@@ -437,9 +439,13 @@ app.post("/rooms/create", async (req, reply) => {
   if (!(await isPremium(userId))) return reply.code(402).send({ error: "premium", message: "Oda kurmak premium gerektirir.", upgrade: true });
   const { level, name, mode, pool } = req.body || {};
   const topic = pickTopic(level || "B1");
-  const focusWords = Array.isArray(pool) ? pool.slice(0, 12) : [];
-  const room = createHostedRoom({ host: { userId, name }, level: level || "B1", topic, mode, focusWords });
-  return { room: { name: room.name, level: room.level, mode: room.mode, topic: room.topic, focusWords: room.focusWords, code: room.code, members: room.members.map(m => ({ name: m.name })), size: room.members.length } };
+  // Oda kurulunca ORTAK kelime YOK (arkadaş henüz gelmedi) → focusWords boş.
+  // Kuran kişinin havuzunu sakla; arkadaş katılınca kesişim hesaplanır.
+  const room = createHostedRoom({ host: { userId, name }, level: level || "B1", topic, mode, focusWords: [] });
+  room.hostPool = Array.isArray(pool) ? [...new Set(pool.filter(Boolean).map((x) => String(x).toLowerCase()))] : [];
+  // Oyun modu: ızgara kelimeleri için havuz listesi (kuran + katılanların havuzları)
+  room.memberPools = [{ userId, name, pool: Array.isArray(pool) ? pool : [] }];
+  return { room: { name: room.name, level: room.level, mode: room.mode, topic: room.topic, focusWords: [], code: room.code, members: room.members.map(m => ({ name: m.name })), size: room.members.length } };
 });
 
 // AI konuşma partneri odası (AÇIK): kullanıcının seçtiği kelimelerle AI sohbet başlatır.
@@ -481,13 +487,25 @@ app.post("/chat/recap", async (req, reply) => {
 app.post("/rooms/join", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
-  const { code, name } = req.body || {};
+  const { code, name, pool } = req.body || {};
   if (!code) return reply.code(400).send({ error: "code gerekli" });
   const room = getRoomByCode(code);
   if (!room) return reply.code(404).send({ error: "oda bulunamadı veya kapandı" });
   const res = addMember(room, { userId, name });
   if (!res.ok) return reply.code(409).send({ error: res.reason });
-  return { room: { name: room.name, level: room.level, topic: room.topic, members: room.members.map(m => ({ name: m.name })), size: room.members.length } };
+  // Arkadaş katıldı → GERÇEK ortak kelimeleri hesapla (kuran havuzu ∩ katılan havuzu)
+  const joinPool = Array.isArray(pool) ? new Set(pool.filter(Boolean).map((x) => String(x).toLowerCase())) : new Set();
+  const common = (room.hostPool || []).filter((w) => joinPool.has(w)).slice(0, 12);
+  room.focusWords = common;
+  // Oyun modu: katılanın havuzunu da ızgara için ekle
+  if (room.mode === "game") { room.memberPools = room.memberPools || []; room.memberPools.push({ userId, name, pool: Array.isArray(pool) ? pool : [] }); }
+  // Kuran kişiye WS ile bildir: ortak kelimeler + arkadaş katıldı → aktiviteye başla
+  const cr = { name: room.name, level: room.level, mode: room.mode, topic: room.topic, focusWords: common, code: room.code, members: room.members.map(m => ({ name: m.name })), size: room.members.length };
+  for (const m of room.members) {
+    sockets.push(m.userId, { type: "room_focus", focusWords: common });
+    if (m.userId !== userId) sockets.push(m.userId, { type: "room_start", room: cr }); // lobby'deki kurana
+  }
+  return { room: cr };
 });
 
 // ── 👥 Arkadaş sistemi (basit kodla-ekle; onay yok) ──────────────────

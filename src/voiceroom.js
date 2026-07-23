@@ -30,6 +30,16 @@ export function createVoiceRoom(room) {
   return vr;
 }
 export function getVoiceRoom(name) { return rooms.get(name) || null; }
+
+// Sonradan katılan üyeyi sesli odaya ekle (davet kodlu/özel odalarda kişi kurulduktan
+// sonra gelir → sıraya dahil edilmeli, yoksa konuşamaz). Zaten varsa yok sayar.
+export function ensureMember(vr, member) {
+  if (!vr || !member?.userId) return;
+  if (vr.members.some((m) => m.userId === member.userId)) return;
+  vr.members.push({ userId: member.userId, name: member.name, bot: false });
+  vr.order.push(member.userId);
+  bc(vr, { type: "vr_state", state: stateFor(vr) });
+}
 export function endVoiceRoom(name) {
   const vr = rooms.get(name);
   if (vr?.timer) clearTimeout(vr.timer);

@@ -39,13 +39,25 @@ export function createGame(room) {
   ]);
   const grid = words.map((en, i) => ({ en, role: roleBag[i] || "neutral", revealed: false, revealedBy: null }));
 
-  // Takımlar: insan(lar) kırmızıda (başlayan takım) spymaster; kalanları 2v2 böl.
-  const members = shuffle([...(room.members || [])]);
+  // Oyun 4 kişilik (2v2). Özel/davet odasında yeterli gerçek oyuncu yoksa BOT ile doldur.
+  const GAME_BOTS = ["Ada", "Kaan", "Ela", "Deniz", "Mert", "Nil"];
+  const filled = [...(room.members || [])];
+  while (filled.length < 4) {
+    const i = filled.length;
+    filled.push({ userId: "gbot_" + i + "_" + Math.random().toString(36).slice(2, 7), name: GAME_BOTS[i % GAME_BOTS.length], bot: true });
+  }
+  const members = shuffle(filled);
   const humans = members.filter(m => !m.bot);
   const bots = members.filter(m => m.bot);
   const red = [], blue = [];
-  if (humans[0]) red.push(humans[0]);
-  for (const m of [...humans.slice(1), ...bots]) (red.length <= blue.length ? red : blue).push(m);
+  // Özel oda (davet kodlu) + tam 2 arkadaş → İKİSİ AYNI TAKIMDA (birlikte oynasınlar), karşıda botlar.
+  if (room.code && humans.length === 2) {
+    red.push(humans[0], humans[1]);        // 2 arkadaş: h0 şef, h1 ajan
+    blue.push(bots[0], bots[1]);           // karşı takım: 2 bot
+  } else {
+    if (humans[0]) red.push(humans[0]);
+    for (const m of [...humans.slice(1), ...bots]) (red.length <= blue.length ? red : blue).push(m);
+  }
 
   const spymasterOf = (team) => (team.find(m => !m.bot) || team[0]);
   const rS = spymasterOf(red), bS = spymasterOf(blue);
