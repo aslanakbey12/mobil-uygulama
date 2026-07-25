@@ -432,11 +432,15 @@ app.get("/me/entitlement", async (req, reply) => {
   return { premium, roomsUsedToday: roomsUsedToday(userId), freeDailyLimit: freeDailyLimit() };
 });
 
-// Premium: kendi odanı kur (eşleştirme beklemeden), davet kodu al
+// Kendi odanı kur (eşleştirme beklemeden), davet kodu al.
+// Ücretsiz kullanıcı günde freeDailyLimit() oda kurabilir; premium sınırsız → arkadaşla oynama herkese açık.
 app.post("/rooms/create", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
-  if (!(await isPremium(userId))) return reply.code(402).send({ error: "premium", message: "Oda kurmak premium gerektirir.", upgrade: true });
+  const premium = await isPremium(userId);
+  if (!premium && !canEnterRoom(userId)) {
+    return reply.code(402).send({ error: "limit", message: `Ücretsiz planda günde ${freeDailyLimit()} oda kurabilirsin. Premium ile sınırsız.`, upgrade: true });
+  }
   const { level, name, mode, pool } = req.body || {};
   const topic = pickTopic(level || "B1");
   // Oda kurulunca ORTAK kelime YOK (arkadaş henüz gelmedi) → focusWords boş.
@@ -445,6 +449,7 @@ app.post("/rooms/create", async (req, reply) => {
   room.hostPool = Array.isArray(pool) ? [...new Set(pool.filter(Boolean).map((x) => String(x).toLowerCase()))] : [];
   // Oyun modu: ızgara kelimeleri için havuz listesi (kuran + katılanların havuzları)
   room.memberPools = [{ userId, name, pool: Array.isArray(pool) ? pool : [] }];
+  if (!premium) recordRoomEntry(userId);   // ücretsiz günlük oda sayacı
   return { room: { name: room.name, level: room.level, mode: room.mode, topic: room.topic, focusWords: [], code: room.code, members: room.members.map(m => ({ name: m.name })), size: room.members.length } };
 });
 
