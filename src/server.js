@@ -12,6 +12,9 @@ import * as reading from "./reading.js";
 import * as images from "./images.js";
 import * as chatAI from "./chat_ai.js";
 import * as aiquota from "./aiquota.js";
+import { moderateChat } from "./textsafety.js";
+import { sendPush } from "./push.js";
+import { rateLimited } from "./ratelimit.js";
 
 // Sesli tur odası klipleri ikili (binary) gelir — Fastify'a parser tanıt
 voiceroom.setBroadcaster((roomName, members, payload) => {
@@ -152,8 +155,12 @@ app.register(async function (appWs) {
       // Yazılı oda sohbeti → odadaki herkese yayınla
       if (msg.type === "chat" && room.mode === "text" && typeof msg.text === "string") {
         const me = room.members.find((m) => m.userId === userId);
-        const text = String(msg.text).slice(0, 500).trim();
-        if (!text) return;
+        const raw = String(msg.text).slice(0, 500).trim();
+        if (!raw) return;
+        // İçerik güvenliği: küfür maskele; ağır uygunsuzlukta mesajı hiç iletme.
+        const modres = moderateChat(raw);
+        if (modres.blocked) { sockets.push(userId, { type: "chat_blocked", reason: "Mesaj topluluk kurallarına uymadığı için gönderilmedi." }); return; }
+        const text = modres.clean;
         const payload = { type: "chat", from: userId, name: me.name, text, ts: Date.now() };
         for (const m of room.members) sockets.push(m.userId, payload);
         // AI odasıysa: geçmişi güncelle + AI yanıtı üret, "yazıyor…" göster, sonra push
@@ -228,7 +235,12 @@ app.addHook("onRequest", async (req, reply) => {
   reply.header("Access-Control-Allow-Origin", allow);
   reply.header("Access-Control-Allow-Headers", "content-type,authorization,x-user-id");
   reply.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  if (req.method === "OPTIONS") reply.code(204).send();
+  if (req.method === "OPTIONS") { reply.code(204).send(); return; }
+  // Global flood koruması (IP başına, cömert eşik). /health (warmup) ve /ws (yeniden bağlanma) muaf.
+  const u = req.url || "";
+  if (!u.startsWith("/health") && !u.startsWith("/ws")) {
+    if (rateLimited(req.ip)) return reply.code(429).send({ error: "Çok fazla istek. Lütfen biraz sonra tekrar dene." });
+  }
 });
 
 app.get("/health", async () => ({
@@ -600,6 +612,119 @@ app.post("/friends/add", async (req, reply) => {
   return { friend: { id: fc.user_id, name: fc.name || "Arkadaş" } };
 });
 
+// ── Arkadaşlık İSTEĞİ (kullanıcı adı + onay) ──────────────────────────
+// Kullanıcı adıyla istek gönder. Karşı taraf zaten sana istek attıysa OTOMATİK kabul.
+app.post("/friends/request", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return reply.code(503).send({ error: "Arkadaş sistemi yakında." });
+  const uname = String(req.body?.username || "").trim();
+  if (!uname) return reply.code(400).send({ error: "Kullanıcı adı gerekli." });
+  // ilike ile büyük/küçük harf duyarsız; LIKE joker karakterlerini (% _ \) escape et.
+  const esc = uname.replace(/([\\%_])/g, "\\$1");
+  const { data: target } = await db.from("profiles").select("id,username,name").ilike("username", esc).maybeSingle();
+  if (!target) return reply.code(404).send({ error: "Bu kullanıcı adı bulunamadı." });
+  if (target.id === userId) return reply.code(400).send({ error: "Kendine istek gönderemezsin 🙂" });
+  if (mod.areBlocked(userId, target.id)) return reply.code(403).send({ error: "Bu kullanıcıyla bağlantı kurulamıyor." });
+  const { data: already } = await db.from("friendships").select("friend_id").eq("user_id", userId).eq("friend_id", target.id).maybeSingle();
+  if (already) return reply.code(400).send({ error: "Zaten arkadaşsınız." });
+  // Karşı taraf zaten sana istek attıysa → çift yönlü arkadaşlık + istekleri temizle
+  const { data: reverse } = await db.from("friend_requests").select("id").eq("from_user", target.id).eq("to_user", userId).maybeSingle();
+  if (reverse) {
+    await db.from("friendships").upsert([
+      { user_id: userId, friend_id: target.id },
+      { user_id: target.id, friend_id: userId },
+    ], { onConflict: "user_id,friend_id", ignoreDuplicates: true });
+    await db.from("friend_requests").delete().eq("from_user", target.id).eq("to_user", userId);
+    await db.from("friend_requests").delete().eq("from_user", userId).eq("to_user", target.id);
+    return { accepted: true, friend: { id: target.id, name: target.name || target.username } };
+  }
+  await db.from("friend_requests").upsert({ from_user: userId, to_user: target.id }, { onConflict: "from_user,to_user", ignoreDuplicates: true });
+  // Karşı tarafa push: "X sana arkadaşlık isteği gönderdi" (fire-and-forget)
+  const { data: mp } = await db.from("profiles").select("name, username").eq("id", userId).maybeSingle();
+  const myName = mp?.name || mp?.username || "Biri";
+  sendPush(target.id, { title: "👋 Yeni arkadaşlık isteği", body: `${myName} sana arkadaşlık isteği gönderdi.`, data: { screen: "ChatTab" } });
+  return { requested: true, to: { name: target.name || target.username } };
+});
+
+// Gelen (bekleyen) arkadaşlık istekleri
+app.get("/friends/requests", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return { requests: [] };
+  const { data: rows } = await db.from("friend_requests").select("from_user, created_at")
+    .eq("to_user", userId).order("created_at", { ascending: false }).limit(50);
+  const ids = (rows || []).map((r) => r.from_user);
+  if (!ids.length) return { requests: [] };
+  const { data: profs } = await db.from("profiles").select("id, name, username").in("id", ids);
+  const byId = Object.fromEntries((profs || []).map((p) => [p.id, p]));
+  return { requests: ids.map((id) => ({ id, name: byId[id]?.name || byId[id]?.username || "Kullanıcı" })) };
+});
+
+// İsteği kabul et → çift yönlü arkadaşlık
+app.post("/friends/requests/accept", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return reply.code(503).send({ error: "Arkadaş sistemi yakında." });
+  const fromId = String(req.body?.fromId || "");
+  if (!fromId) return reply.code(400).send({ error: "fromId gerekli" });
+  const { data: reqRow } = await db.from("friend_requests").select("id").eq("from_user", fromId).eq("to_user", userId).maybeSingle();
+  if (!reqRow) return reply.code(404).send({ error: "İstek bulunamadı (geri çekilmiş olabilir)." });
+  if (mod.areBlocked(userId, fromId)) return reply.code(403).send({ error: "Bu kullanıcıyla bağlantı kurulamıyor." });
+  await db.from("friendships").upsert([
+    { user_id: userId, friend_id: fromId },
+    { user_id: fromId, friend_id: userId },
+  ], { onConflict: "user_id,friend_id", ignoreDuplicates: true });
+  await db.from("friend_requests").delete().eq("from_user", fromId).eq("to_user", userId);
+  await db.from("friend_requests").delete().eq("from_user", userId).eq("to_user", fromId);
+  const { data: p } = await db.from("profiles").select("name, username").eq("id", fromId).maybeSingle();
+  // İsteği gönderene push: "X isteğini kabul etti"
+  const { data: mp2 } = await db.from("profiles").select("name, username").eq("id", userId).maybeSingle();
+  const myName2 = mp2?.name || mp2?.username || "Arkadaşın";
+  sendPush(fromId, { title: "✅ Arkadaşlık kabul edildi", body: `${myName2} arkadaşlık isteğini kabul etti.`, data: { screen: "ChatTab" } });
+  return { friend: { id: fromId, name: p?.name || p?.username || "Arkadaş" } };
+});
+
+// İsteği reddet (ya da gönderdiğin isteği geri çek)
+app.post("/friends/requests/reject", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return { ok: true };
+  const fromId = String(req.body?.fromId || "");
+  if (fromId) {
+    await db.from("friend_requests").delete().eq("from_user", fromId).eq("to_user", userId);   // gelen isteği reddet
+    await db.from("friend_requests").delete().eq("from_user", userId).eq("to_user", fromId);   // gönderdiğini geri çek
+  }
+  return { ok: true };
+});
+
+// ── Push token kaydı (Expo Push) ──────────────────────────────────────
+app.post("/push/register", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const token = String(req.body?.token || "").trim();
+  if (!token.startsWith("ExponentPushToken")) return reply.code(400).send({ error: "geçersiz token" });
+  const db = supa();
+  if (!db) return { ok: true };
+  await db.from("push_tokens").upsert({ user_id: userId, token, updated_at: new Date().toISOString() }, { onConflict: "user_id,token" });
+  return { ok: true };
+});
+
+// ── İstemci çökme/hata raporu (hafif crash reporting — Sentry'ye kadar sunucu logu) ──
+app.post("/client-error", async (req, reply) => {
+  const userId = getUserId(req);
+  const { message, stack, screen, version } = req.body || {};
+  app.log.error({
+    userId, screen: String(screen || "").slice(0, 60), version: String(version || "").slice(0, 20),
+    message: String(message || "").slice(0, 500), stack: String(stack || "").slice(0, 2000),
+  }, "client-error");
+  return { ok: true };
+});
+
 // Arkadaş listesi (adlarıyla)
 app.get("/friends", async (req, reply) => {
   const userId = getUserId(req);
@@ -609,9 +734,10 @@ app.get("/friends", async (req, reply) => {
   const { data: rows } = await db.from("friendships").select("friend_id").eq("user_id", userId);
   const ids = (rows || []).map(r => r.friend_id);
   if (!ids.length) return { friends: [] };
-  const { data: names } = await db.from("friend_codes").select("user_id, name").in("user_id", ids);
-  const nameOf = Object.fromEntries((names || []).map(n => [n.user_id, n.name]));
-  return { friends: ids.map(id => ({ id, name: nameOf[id] || "Arkadaş" })) };
+  // İsim kaynağı: profiles (name → username). Kullanıcı adı zaten benzersiz ve her hesapta var.
+  const { data: profs } = await db.from("profiles").select("id, name, username").in("id", ids);
+  const byId = Object.fromEntries((profs || []).map(p => [p.id, p]));
+  return { friends: ids.map(id => ({ id, name: byId[id]?.name || byId[id]?.username || "Arkadaş" })) };
 });
 
 // Arkadaşı çıkar (çift yönlü)
@@ -658,6 +784,7 @@ app.post("/friends/invite", async (req, reply) => {
   const topic = pickTopic(level || "B1");
   const room = createHostedRoom({ host: { userId, name: name || "Arkadaşın" }, level: level || "B1", topic, mode: m, focusWords: [] });
   await db.from("room_invites").insert({ to_user: friendId, from_name: name || "Arkadaşın", room_code: room.code, mode: m });
+  sendPush(friendId, { title: "🎧 Oda daveti", body: `${name || "Arkadaşın"} seni İngilizce pratiğe davet etti.`, data: { screen: "ChatTab" } });
   return { room: { name: room.name, level: room.level, mode: room.mode, topic: room.topic, code: room.code, members: room.members.map(x => ({ name: x.name })), size: room.members.length } };
 });
 

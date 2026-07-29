@@ -110,8 +110,18 @@ function bodyFor(model, body) {
 }
 // Gemini'yi model-yedekli + retry ile çağır, ham metni döndür. 503'te önce aynı modelde
 // birkaç kez, sonra yedek modelde dener → parça asla "high demand" yüzünden boş kalmaz.
+// İçerik güvenliği: zararlı kategorileri engelle (öğrenme uygulaması, gence yakın kitle).
+const SAFETY = [
+  { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+  { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+  { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+  { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+];
+
 export async function geminiText(body, { timeout = 30000, tries = 3 } = {}) {
   let lastErr = "";
+  // Güvenlik ayarlarını her isteğe ekle (istem enjeksiyonuna karşı da katman).
+  body = { safetySettings: SAFETY, ...body };
   for (const model of modelChain()) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
     const mbody = bodyFor(model, body);
