@@ -5,6 +5,9 @@ const DIVISIONS = ["Bronz", "Gümüş", "Altın", "Safir", "Elmas"];
 const POD_SIZE = 30;
 const PROMOTE = 7;   // üst 7 bir üst divizyona
 const RELEGATE = 5;  // alt 5 bir alt divizyona
+// Haftalık XP üst sınırı: puan istemciden geliyor → uydurma dev sayılarla lider tablosu
+// manipüle edilemesin (makul bir haftalık tavan; env ile ayarlanır).
+const WEEKLY_XP_CAP = parseInt(process.env.LEAGUE_WEEKLY_XP_CAP || "50000", 10);
 
 // userId -> { name, division, weeklyXp, weekKey, lastRank }
 const users = new Map();
@@ -61,7 +64,8 @@ export function sync({ userId, name, weeklyXp, level }) {
     u.weekKey = wk; u.weeklyXp = 0; u.lastRank = 0;
   }
   u.name = name || u.name;
-  u.weeklyXp = Math.max(u.weeklyXp, Number(weeklyXp) || 0);
+  const claimed = Math.min(Math.max(0, Number(weeklyXp) || 0), WEEKLY_XP_CAP);
+  u.weeklyXp = Math.max(u.weeklyXp, claimed);
   users.set(userId, u);
 
   // Pod: aynı divizyondaki gerçek kullanıcılar + botlarla POD_SIZE'a tamamla

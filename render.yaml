@@ -20,8 +20,20 @@ services:
         value: "3"
       - key: FREE_DAILY_ROOMS
         value: "20"
+      # ÜRETİM: 0 olmalı. 1 iken isPremium() HERKES için true döner → paywall/kota devre dışı, gelir 0.
       - key: DEV_PREMIUM
+        value: "0"
+      # Doğrulanmamış header'a (x-user-id) GÜVENME → tam kimlik kilidi. Supabase env'leri gerekir.
+      - key: AUTH_STRICT
         value: "1"
-      # LiveKit boş → sesli oda kapalı (istemcide VOICE_LIVE=false zaten)
-      # Supabase boş → dev kimlik (x-user-id). Gerçek auth gelince JWT_SECRET eklenecek.
+      # AI günlük çağrı sınırı (kullanıcı başına) — maliyet/DoS koruması.
+      - key: AI_DAILY_CAP
+        value: "300"
+      # ── PANELDEN (Dashboard → Environment) GİZLİ OLARAK GİRİLECEK env'ler ──
+      #   SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_JWT_SECRET  (auth + DB + AUTH_STRICT için ŞART)
+      #   GEMINI_API_KEY            (okuma/AI sohbet)
+      #   PEXELS_API_KEY            (kelime görselleri)
+      #   REVENUECAT_WEBHOOK_TOKEN  (premium webhook — YOKSA webhook artık FAIL-CLOSED reddeder)
+      #   CORS_ORIGINS              (üretim web adresi, ör. https://liveda.netlify.app; boşsa "*")
+      # LiveKit boş → sesli oda clip-relay ile çalışır (LIVEKIT_* opsiyonel).
       # PORT'u ELLE GİRME — Render otomatik atar, kod process.env.PORT'u okur.

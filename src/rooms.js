@@ -7,6 +7,22 @@ const codes = new Map();        // code -> roomName  (premium davet odaları)
 
 export const MAX_ROOM = 5;
 
+// Oda kapandığında haber verilecek dinleyiciler (oyun/ses state temizliği için).
+const closeListeners = [];
+export function onRoomClose(cb) { closeListeners.push(cb); }
+
+// Davet kodu: 6 haneli alfanümerik (karışan I/O/0/1 yok) → ~1 milyar olasılık.
+// Eski 6 haneli sayı (900 bin) kaba kuvvetle taranabiliyordu. Çakışma kontrollü.
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function genRoomCode() {
+  for (let i = 0; i < 12; i++) {
+    let s = "";
+    for (let j = 0; j < 6; j++) s += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+    if (!codes.has(s)) return s;
+  }
+  return "R" + randomUUID().slice(0, 5).toUpperCase(); // aşırı olasılıksız yedek
+}
+
 export function createRoom({ level, topic, members, mode, focusWords, memberPools }) {
   const roomName = "room_" + randomUUID().slice(0, 8);
   const m = mode === "text" ? "text" : mode === "game" ? "game" : "voice";
@@ -29,7 +45,7 @@ export function createRoom({ level, topic, members, mode, focusWords, memberPool
 // Premium kullanıcı kendi odasını kurar; paylaşılabilir kısa kod döner.
 export function createHostedRoom({ host, level, topic, mode, focusWords }) {
   const room = createRoom({ level, topic, mode, focusWords, members: [{ userId: host.userId, name: host.name }] });
-  const code = String(Math.floor(100000 + Math.random() * 900000)); // 6 haneli
+  const code = genRoomCode(); // 6 haneli alfanümerik, çakışma kontrollü
   room.code = code;
   room.host = host.userId;
   codes.set(code, room.name);
@@ -49,7 +65,7 @@ export function createAiRoom({ user, level, focusWords, botName, topic }) {
 }
 
 export function getRoomByCode(code) {
-  const name = codes.get(String(code));
+  const name = codes.get(String(code || "").trim().toUpperCase());
   return name ? rooms.get(name) || null : null;
 }
 
@@ -85,6 +101,7 @@ export function closeRoom(roomName) {
   }
   if (room.code) codes.delete(room.code);
   rooms.delete(roomName);
+  for (const cb of closeListeners) { try { cb(roomName); } catch (e) {} }
 }
 
 export function leaveRoom(userId) {

@@ -11,6 +11,7 @@ import * as voiceroom from "./voiceroom.js";
 import * as reading from "./reading.js";
 import * as images from "./images.js";
 import * as chatAI from "./chat_ai.js";
+import * as aiquota from "./aiquota.js";
 
 // Sesli tur odası klipleri ikili (binary) gelir — Fastify'a parser tanıt
 voiceroom.setBroadcaster((roomName, members, payload) => {
@@ -22,9 +23,20 @@ import { supaConfigured, supa } from "./supabase.js";
 import { isPremium, setPremium } from "./entitlements.js";
 import { canEnterRoom, recordRoomEntry, roomsUsedToday, freeDailyLimit } from "./quota.js";
 import { pickTopic } from "./topics.js";
-import { getRoom, roomStats, leaveRoom, createHostedRoom, getRoomByCode, addMember, createAiRoom } from "./rooms.js";
+import { getRoom, roomStats, leaveRoom, createHostedRoom, getRoomByCode, addMember, createAiRoom, onRoomClose } from "./rooms.js";
 
-const app = Fastify({ logger: true });
+// Logger: istek URL'lerindeki token/access_token query paramlarını REDAKTE et.
+// (WS ve klip indirme token'ı query ile geçiyor → düz loglanırsa kısa ömürlü de olsa sızar.)
+const app = Fastify({
+  logger: {
+    serializers: {
+      req(req) {
+        const url = String(req.url || "").replace(/([?&](?:token|access_token)=)[^&]*/gi, "$1[REDACTED]");
+        return { method: req.method, url, hostname: req.hostname, remoteAddress: req.ip };
+      },
+    },
+  },
+});
 
 // WebSocket eklentisi (anlık eşleşme + odadan çıkarma bildirimi)
 app.register(websocket);
@@ -124,7 +136,9 @@ mm.onMatch((room) => {
 // (@fastify/websocket v10: handler'ın ilk argümanı doğrudan soket)
 app.register(async function (appWs) {
   appWs.get("/ws", { websocket: true }, (socket, req) => {
-    const userId = getUserId(req) || req.query?.userId;
+    // GÜVENLİK: yalnız getUserId'ye güven. Strict modda bu, doğrulanmamış query userId'ye
+    // DÜŞMEZ (eski `|| req.query.userId` yedeği AUTH_STRICT'i baypas edip kimlik taklidine izin veriyordu).
+    const userId = getUserId(req);
     if (!userId) { try { socket.close(); } catch (e) {} return; }
     sockets.register(userId, socket);
     socket.on("close", () => sockets.unregister(userId, socket));
@@ -146,6 +160,9 @@ app.register(async function (appWs) {
         if (room.ai && chatAI.chatConfigured()) {
           room.aiHistory = room.aiHistory || [];
           room.aiHistory.push({ mine: true, text });
+          // Günlük AI kotası aşıldıysa yanıt üretme (maliyet koruması); mesaj yine de iletildi.
+          if (!aiquota.underAiCap(userId)) { sockets.push(userId, { type: "typing_stop" }); return; }
+          aiquota.bumpAi(userId);
           sockets.push(userId, { type: "typing", name: room.ai.name });
           chatAI.generateReply(room.aiHistory, room.focusWords, room.level, room.ai.name)
             .then((reply) => {
@@ -198,9 +215,17 @@ app.register(async function (appWs) {
   });
 });
 
-// Basit CORS (MVP). Üretimde origin'i kısıtla.
+// CORS. Üretimde CORS_ORIGINS env'iyle origin kısıtlanır (ör. Netlify web adresi);
+// ayarlanmazsa "*" (mobil uygulama zaten Origin başlığı göndermez).
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || "*").split(",").map((s) => s.trim()).filter(Boolean);
 app.addHook("onRequest", async (req, reply) => {
-  reply.header("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  let allow = "*";
+  if (!CORS_ORIGINS.includes("*")) {
+    allow = origin && CORS_ORIGINS.includes(origin) ? origin : CORS_ORIGINS[0];
+    reply.header("Vary", "Origin");
+  }
+  reply.header("Access-Control-Allow-Origin", allow);
   reply.header("Access-Control-Allow-Headers", "content-type,authorization,x-user-id");
   reply.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   if (req.method === "OPTIONS") reply.code(204).send();
@@ -244,8 +269,10 @@ app.post("/word/mnemonic", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!reading.readingConfigured()) return reply.code(503).send({ error: "AI servisi yakında etkinleşecek." });
+  if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük AI hakkın doldu, yarın tekrar dene." });
   const { en, tr } = req.body || {};
   if (!en) return reply.code(400).send({ error: "kelime gerekli" });
+  aiquota.bumpAi(userId);
   try {
     const mnemonic = await reading.generateMnemonic(String(en).slice(0, 40), String(tr || "").slice(0, 80));
     return { mnemonic };
@@ -260,7 +287,7 @@ app.post("/word/image/rate", async (req, reply) => {
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   const { en, url, up } = req.body || {};
   if (!en || !url) return reply.code(400).send({ error: "en ve url gerekli" });
-  return images.rateWordImage(String(en).slice(0, 60), String(url).slice(0, 500), !!up);
+  return images.rateWordImage(String(en).slice(0, 60), String(url).slice(0, 500), !!up, userId);
 });
 
 // Okuma kalite geri bildirimi (👍/👎) — çok olumsuz alan parça önbellekten silinir
@@ -278,8 +305,10 @@ app.post("/word/example", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!reading.readingConfigured()) return reply.code(503).send({ error: "AI servisi yakında etkinleşecek." });
+  if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük AI hakkın doldu, yarın tekrar dene." });
   const { en, tr, level, context } = req.body || {};
   if (!en) return reply.code(400).send({ error: "kelime gerekli" });
+  aiquota.bumpAi(userId);
   try {
     const example = await reading.generateExample(String(en).slice(0, 40), String(tr || "").slice(0, 80), String(level || "B1"), String(context || "").slice(0, 40));
     return { example };
@@ -321,7 +350,7 @@ app.post("/voiceroom/clip", async (req, reply) => {
   if (!room.members.some((m) => m.userId === userId)) return reply.code(403).send({ error: "erişim yok" });
   const buf = req.body;
   if (!buf || !buf.length) return reply.code(400).send({ error: "ses verisi yok" });
-  const clipId = voiceroom.putClip(buf, req.headers["content-type"] || "audio/m4a");
+  const clipId = voiceroom.putClip(buf, req.headers["content-type"] || "audio/m4a", roomName);
   const durationMs = parseInt(req.headers["x-duration-ms"] || "3000", 10);
   const vr = voiceroom.getVoiceRoom(roomName);
   const r = voiceroom.onClip(vr, userId, clipId, durationMs);
@@ -329,10 +358,19 @@ app.post("/voiceroom/clip", async (req, reply) => {
   return { ok: true, clipId };
 });
 
-// Klibi indir (oynatmak için) — kısa ömürlü, tahmin edilemez id
+// Klibi indir (oynatmak için) — kısa ömürlü, tahmin edilemez id.
+// GÜVENLİK: yalnız klibin ait olduğu odanın üyesi indirebilir (ses kaydı mahremiyeti).
+// İstemci token'ı query ile geçer (?token= / ?userId=) → onRequest hook doğrular.
 app.get("/voiceroom/clip/:id", async (req, reply) => {
   const c = voiceroom.getClip(req.params.id);
   if (!c) return reply.code(404).send({ error: "klip bulunamadı" });
+  if (c.room) {
+    const userId = getUserId(req);
+    const room = getRoom(c.room);
+    if (!userId || !room || !room.members.some((m) => m.userId === userId)) {
+      return reply.code(403).send({ error: "erişim yok" });
+    }
+  }
   reply.header("content-type", c.contentType);
   reply.header("cache-control", "no-store");
   return reply.send(c.buf);
@@ -459,6 +497,8 @@ app.post("/rooms/ai", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!chatAI.chatConfigured()) return reply.code(503).send({ error: "AI sohbet yakında etkinleşecek." });
+  if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük AI hakkın doldu, yarın tekrar dene." });
+  aiquota.bumpAi(userId);
   const { level, name, words } = req.body || {};
   const focusWords = Array.isArray(words) ? [...new Set(words.filter(Boolean).map(String))].slice(0, 4) : [];
   const botName = AI_BOT_NAMES[Math.floor(Math.random() * AI_BOT_NAMES.length)];
@@ -480,6 +520,8 @@ app.post("/chat/recap", async (req, reply) => {
   const { messages, words, level } = req.body || {};
   const msgs = Array.isArray(messages) ? messages.slice(-20) : [];
   if (!msgs.some((m) => m && m.mine)) return { recap: null }; // öğrenci hiç yazmamış
+  if (!aiquota.underAiCap(userId)) return { recap: null };    // günlük AI kotası doldu → sessizce geç
+  aiquota.bumpAi(userId);
   try {
     const recap = await chatAI.generateRecap(msgs, Array.isArray(words) ? words : [], String(level || "B1"));
     return { recap };
@@ -609,6 +651,9 @@ app.post("/friends/invite", async (req, reply) => {
   const { friendId, name, level, mode } = req.body || {};
   if (!friendId) return reply.code(400).send({ error: "friendId gerekli" });
   if (mod.areBlocked(userId, friendId)) return reply.code(403).send({ error: "Bu kullanıcıya davet gönderilemez." });
+  // YETKİ: sadece gerçek arkadaşa davet gönderilebilir (rastgele userId'lere davet spam'i engellenir).
+  const { data: fr } = await db.from("friendships").select("friend_id").eq("user_id", userId).eq("friend_id", String(friendId)).maybeSingle();
+  if (!fr) return reply.code(403).send({ error: "Sadece arkadaş listendekilere davet gönderebilirsin." });
   const m = mode === "voice" ? "voice" : "text";
   const topic = pickTopic(level || "B1");
   const room = createHostedRoom({ host: { userId, name: name || "Arkadaşın" }, level: level || "B1", topic, mode: m, focusWords: [] });
@@ -644,7 +689,10 @@ app.post("/friends/invites/clear", async (req, reply) => {
 // (RevenueCat'te app_user_id = Supabase user id olacak şekilde ayarla)
 app.post("/webhooks/revenuecat", async (req, reply) => {
   const auth = req.headers["authorization"];
-  if (process.env.REVENUECAT_WEBHOOK_TOKEN && auth !== `Bearer ${process.env.REVENUECAT_WEBHOOK_TOKEN}`) {
+  const rcToken = process.env.REVENUECAT_WEBHOOK_TOKEN;
+  // FAIL-CLOSED: token yapılandırılmamışsa DA reddet. (Eskiden token yoksa kontrol atlanıyordu
+  // → herkes app_user_id yollayıp kendine/başkasına premium yazabiliyordu.)
+  if (!rcToken || auth !== `Bearer ${rcToken}`) {
     return reply.code(401).send({ error: "yetkisiz" });
   }
   const ev = req.body?.event || {};
@@ -678,6 +726,12 @@ app.post("/livekit/webhook", async (req, reply) => {
   const event = req.body || {};
   app.log.info({ type: event.event, room: event.room?.name, participant: event.participant?.identity }, "livekit webhook");
   return reply.code(200).send({ received: true });
+});
+
+// Oda kapandığında oyun/ses odası bellek state'ini de temizle (sızıntı önlemi).
+onRoomClose((name) => {
+  try { game.endGame(name); } catch (e) {}
+  try { voiceroom.endVoiceRoom(name); } catch (e) {}
 });
 
 const PORT = parseInt(process.env.PORT || "3000", 10);

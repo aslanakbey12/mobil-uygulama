@@ -110,9 +110,9 @@ export function passTurn(vr, userId) {
 }
 
 // ── Klip deposu (MVP: bellek) ──
-export function putClip(buf, contentType) {
+export function putClip(buf, contentType, room) {
   const id = "clip_" + randomUUID().slice(0, 12);
-  clips.set(id, { buf, contentType: contentType || "audio/m4a", ts: Date.now() });
+  clips.set(id, { buf, contentType: contentType || "audio/m4a", ts: Date.now(), room: room || null });
   const now = Date.now();
   for (const [k, v] of clips) if (now - v.ts > CLIP_TTL) clips.delete(k); // basit temizlik
   return id;
