@@ -725,7 +725,28 @@ app.post("/client-error", async (req, reply) => {
   return { ok: true };
 });
 
-// Arkadaş listesi (adlarıyla)
+// Aktiflik nabzı: kullanıcının ilerleme özetini yaz (arkadaşların "aktiflik" görünümü için).
+// last_active her çağrıda now() olur → çevrimiçi/son görülme buradan hesaplanır.
+app.post("/me/activity", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return { ok: false };
+  const b = req.body || {};
+  const clamp = (v, max) => Math.max(0, Math.min(max, Math.round(Number(v) || 0)));
+  const nowIso = new Date().toISOString();
+  await db.from("user_stats").upsert({
+    user_id: userId,
+    last_active: nowIso,
+    streak: clamp(b.streak, 100000),
+    xp: clamp(b.xp, 1e9),
+    learned: clamp(b.learned, 1e6),
+    updated_at: nowIso,
+  }, { onConflict: "user_id" });
+  return { ok: true };
+});
+
+// Arkadaş listesi (adları + aktiflik: son görülme, seri, XP, öğrenilen kelime)
 app.get("/friends", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
@@ -737,7 +758,23 @@ app.get("/friends", async (req, reply) => {
   // İsim kaynağı: profiles (name → username). Kullanıcı adı zaten benzersiz ve her hesapta var.
   const { data: profs } = await db.from("profiles").select("id, name, username").in("id", ids);
   const byId = Object.fromEntries((profs || []).map(p => [p.id, p]));
-  return { friends: ids.map(id => ({ id, name: byId[id]?.name || byId[id]?.username || "Arkadaş" })) };
+  // Aktiflik özeti (service-role → arkadaşların satırlarını okuyabiliriz)
+  const { data: stats } = await db.from("user_stats").select("user_id, last_active, streak, xp, learned").in("user_id", ids);
+  const statById = Object.fromEntries((stats || []).map(s => [s.user_id, s]));
+  const friends = ids.map(id => {
+    const st = statById[id] || {};
+    return {
+      id,
+      name: byId[id]?.name || byId[id]?.username || "Arkadaş",
+      lastActive: st.last_active || null,
+      streak: st.streak || 0,
+      xp: st.xp || 0,
+      learned: st.learned || 0,
+    };
+  });
+  // En son aktif olan üstte
+  friends.sort((a, b) => (Date.parse(b.lastActive) || 0) - (Date.parse(a.lastActive) || 0));
+  return { friends };
 });
 
 // Arkadaşı çıkar (çift yönlü)
