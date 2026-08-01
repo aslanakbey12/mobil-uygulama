@@ -92,13 +92,28 @@ async function postGemini(url, body, ms = 30000) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Model yedekleme zinciri: birincil (flash-latest, 3.5) 503/aşırı yük verirse YEDEK modele
 // geçer. Yedek `gemini-pro-latest` = daha YÜKSEK kalite (alt sürüm değil). Her modelde retry.
+// YAPIŞKAN MODEL SEÇİMİ — gecikmenin asıl kaynağı buydu.
+// Sorun: zincirin başındaki model (flash-latest) uzun süredir 503 veriyor. Her istekte
+// önce ona gidiliyor, 2 deneme + bekleme boşa harcanıyordu (~38 sn), ANCAK sonra çalışan
+// modele geçiliyordu. Çözüm: en son BAŞARILI olan modeli hatırla ve önce onu dene.
+// Google düzelirse fark edelim diye periyodik olarak tercih edilen sırayı yeniden yokla.
+let lastGoodModel = null;
+let lastProbeAt = 0;
+const PROBE_INTERVAL_MS = 10 * 60 * 1000;   // 10 dk'da bir tercih edilen modeli yeniden dene
+
 function modelChain() {
-  // Teşhis (2026-07): flash-latest/3.5-flash şu an 503 (Google aşırı yük), 2.x bu key'de 404.
-  // ÇALIŞAN + yüksek kalite: gemini-3-flash-preview (Gemini 3 Flash). Yedek: flash-lite.
-  // flash-latest önce denenir (Google düzelince otomatik ona döner), sonra çalışanlar.
-  const chain = [MODEL, "gemini-3-flash-preview", "gemini-flash-lite-latest"];
-  return [...new Set(chain)];
+  const chain = [...new Set([MODEL, "gemini-3-flash-preview", "gemini-flash-lite-latest"])];
+  if (!lastGoodModel) return chain;
+  const now = Date.now();
+  if (now - lastProbeAt > PROBE_INTERVAL_MS) {   // ara sıra tercih edileni yeniden yokla
+    lastProbeAt = now;
+    return chain;
+  }
+  return [lastGoodModel, ...chain.filter((m) => m !== lastGoodModel)];   // çalışan model önce
 }
+
+// Teşhis/izleme için (sağlık ucunda gösterilebilir).
+export function activeModel() { return lastGoodModel; }
 // Pro modelleri thinkingBudget:0'ı reddeder (400) — o modelde bu alanı kaldır.
 function bodyFor(model, body) {
   if (/pro/i.test(model) && body?.generationConfig?.thinkingConfig) {
@@ -136,6 +151,7 @@ export async function geminiText(body, { timeout = 30000, tries = 3 } = {}) {
         const cand0 = (await r.json())?.candidates?.[0];
         const txt = (cand0?.content?.parts || []).map((p) => p?.text || "").join("").trim();
         if (!txt) { lastErr = `boş yanıt ${cand0?.finishReason || ""} (${model})`; if (attempt < tries - 1) { await sleep(1200); continue; } break; }
+        lastGoodModel = model;   // bu model çalıştı → sonraki isteklerde önce bunu dene
         return txt;
       } catch (e) {
         lastErr = e?.name === "AbortError" ? `zaman aşımı (${model})` : String(e?.message || e);

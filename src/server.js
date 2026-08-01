@@ -16,6 +16,10 @@ import { moderateChat } from "./textsafety.js";
 import { sendPush } from "./push.js";
 import { rateLimited } from "./ratelimit.js";
 
+// AI sohbet sınırları — maliyet + pedagoji (oturumun net bir sonu olsun).
+const AI_MAX_TURNS = parseInt(process.env.AI_CHAT_MAX_TURNS || "22", 10);   // tur limiti → sonra ders özeti
+const AI_MIN_GAP_MS = parseInt(process.env.AI_CHAT_MIN_GAP_MS || "1500", 10); // spam koruması
+
 // Sesli tur odası klipleri ikili (binary) gelir — Fastify'a parser tanıt
 voiceroom.setBroadcaster((roomName, members, payload) => {
   for (const m of members) sockets.push(m.userId, payload);
@@ -123,6 +127,7 @@ mm.onMatch((room) => {
     if (room.ai) {
       const human = room.members.find((m) => !m.bot);
       chatAI.generateOpener(room.focusWords, room.level, room.ai.name)
+        .catch(() => chatAI.fallbackOpener(room.focusWords, room.ai.name))   // AI yoksa boş odaya düşme
         .then((op) => {
           if (!op || !getRoom(room.name) || !human) return;
           room.aiHistory.push({ mine: false, text: op });
@@ -167,16 +172,44 @@ app.register(async function (appWs) {
         if (room.ai && chatAI.chatConfigured()) {
           room.aiHistory = room.aiHistory || [];
           room.aiHistory.push({ mine: true, text });
+          room.aiTurns = (room.aiTurns || 0) + 1;
+
+          // TUR LİMİTİ: sohbet sonsuza kadar sürmesin. Hem maliyet kontrolü hem PEDAGOJİ —
+          // oturumun net bir sonu olur, kullanıcı enerjisi yüksekken biter ve ders özeti
+          // (recap) ödül gibi gelir. Limit dolunca kapanış mesajı + özet sinyali gönderilir.
+          if (room.aiTurns > AI_MAX_TURNS) {
+            sockets.push(userId, { type: "typing_stop" });
+            sockets.push(userId, {
+              type: "chat", from: room.ai.id, name: room.ai.name, ai: true, ts: Date.now(),
+              text: "That was a great conversation! Let's stop here and look at what you did well. 👏",
+            });
+            sockets.push(userId, { type: "ai_session_end", reason: "turn_limit" });
+            return;
+          }
+
+          // Hız sınırı: script/spam ile saniyede onlarca AI çağrısı yapılmasın.
+          // (/ws global IP limitinden muaf olduğu için bu koruma burada gerekli.)
+          const nowMs = Date.now();
+          if (room.aiLastCall && nowMs - room.aiLastCall < AI_MIN_GAP_MS) {
+            sockets.push(userId, { type: "typing_stop" });
+            return;
+          }
+          room.aiLastCall = nowMs;
+
           // Günlük AI kotası aşıldıysa yanıt üretme (maliyet koruması); mesaj yine de iletildi.
           if (!aiquota.underAiCap(userId)) { sockets.push(userId, { type: "typing_stop" }); return; }
           aiquota.bumpAi(userId);
           sockets.push(userId, { type: "typing", name: room.ai.name });
           chatAI.generateReply(room.aiHistory, room.focusWords, room.level, room.ai.name)
-            .then((reply) => {
+            .then(({ reply, suggestions }) => {
               if (!reply || !getRoom(room.name)) return; // oda kapandıysa geç
               room.aiHistory.push({ mine: false, text: reply });
               if (room.aiHistory.length > 20) room.aiHistory = room.aiHistory.slice(-20);
-              sockets.push(userId, { type: "chat", from: room.ai.id, name: room.ai.name, text: reply, ts: Date.now(), ai: true });
+              sockets.push(userId, {
+                type: "chat", from: room.ai.id, name: room.ai.name, text: reply, ts: Date.now(), ai: true,
+                suggestions,                                   // 💡 dokunulabilir cevap önerileri
+                turnsLeft: Math.max(0, AI_MAX_TURNS - room.aiTurns),
+              });
             })
             .catch(() => sockets.push(userId, { type: "typing_stop" }));
         }
@@ -547,7 +580,8 @@ app.post("/rooms/ai", async (req, reply) => {
   const botName = AI_BOT_NAMES[Math.floor(Math.random() * AI_BOT_NAMES.length)];
   const room = createAiRoom({ user: { userId, name: name || "Sen" }, level: level || "B1", focusWords, botName });
   let opener = "";
-  try { opener = await chatAI.generateOpener(focusWords, level || "B1", botName); } catch (_) {}
+  try { opener = await chatAI.generateOpener(focusWords, level || "B1", botName); }
+  catch (_) { opener = chatAI.fallbackOpener(focusWords, botName); }
   room.aiHistory = opener ? [{ mine: false, text: opener }] : [];
   return {
     room: { name: room.name, level: room.level, mode: "text", focusWords: room.focusWords, ai: { name: botName }, members: [{ name: name || "Sen" }], size: 1 },
