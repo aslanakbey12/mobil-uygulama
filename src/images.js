@@ -38,13 +38,17 @@ function rankPhotos(en, photos) {
 }
 
 // Kelime için birkaç aday foto döndür (kullanıcı alakasızsa değiştirebilsin).
-export async function fetchWordImage(en) {
+export async function fetchWordImage(en, searchQuery = null) {
   const q = String(en || "").trim().toLowerCase();
   if (!q) throw new Error("kelime gerekli");
   if (cache.has(q)) return { photos: rankPhotos(q, cache.get(q).photos) };
   if (!KEY) throw new Error("Görsel servisi yapılandırılmadı.");
 
-  const url = `https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&per_page=6&orientation=landscape`;
+  // AI arama sorgusu (varsa): "bank" → "bank teller counter" gibi anlamı netleştirir.
+  // Kelime fotoğraflanamaz (soyut) ise HİÇ görsel gösterme — alakasız foto, foto yokluğundan kötüdür.
+  const searchTerm = (searchQuery && String(searchQuery).trim()) || q;
+
+  const url = `https://api.pexels.com/v1/search?query=${encodeURIComponent(searchTerm)}&per_page=6&orientation=landscape`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 12000);
   let r;

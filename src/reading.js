@@ -233,6 +233,71 @@ export async function generateMnemonic(en, tr) {
 
 // Kişiselleştirilmiş örnek cümle. ÖNBELLEK ANAHTARI = kelime|seviye|bağlam →
 // aynı profildeki (seviye+ilgi/motive) TÜM kullanıcılara aynı cümle döner; AI bir kez çalışır.
+// Kelime kartçıkları için TÜRKÇE çeviri: İngilizce tanım + örnek cümle.
+// Neden: words.json'da tanımlar/cümleler yalnızca İngilizce (8683/8683). Yeni başlayan
+// kullanıcı boşluk doldurmada hem cümleyi hem ipucunu anlamıyordu. Kullanıcı kartçığa
+// dokununca Türkçesi çıkacak. Önbellek kelime bazında + TÜM kullanıcılarca paylaşılır
+// (mnemonic deseni) → aynı kelime hayatta bir kez çevrilir.
+const translateCache = new Map();
+export async function translateWordCard(en, definition, example) {
+  const key = String(en).toLowerCase();
+  if (translateCache.has(key)) return translateCache.get(key);
+  if (!KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
+  const def = String(definition || "").slice(0, 200);
+  const ex = String(example || "").slice(0, 200);
+  const prompt = `Türk İngilizce öğrencisi için çeviri yap. Kelime: "${en}".
+İngilizce tanım: "${def}"
+İngilizce örnek cümle: "${ex}"
+Görev: Tanımın ve cümlenin DOĞAL Türkçe karşılığını yaz. Kısa ve anlaşılır olsun; kelime kelime çevirme.
+ÖNEMLİ: Cümlede alt çizgi boşluğu (___) varsa Türkçe çeviride de boşluğu AYNEN koru (cevabı yazma).
+SADECE JSON döndür: {"definitionTr": string, "exampleTr": string}`;
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0.3, maxOutputTokens: 250, thinkingConfig: { thinkingBudget: 0 } },
+  };
+  const txt = await geminiText(body, { timeout: 20000, tries: 2 });
+  let parsed; try { parsed = JSON.parse(extractJson(txt)); } catch (e) { throw new Error("AI yanıtı çözümlenemedi."); }
+  const out = {
+    definitionTr: String(parsed.definitionTr || "").slice(0, 240).trim(),
+    exampleTr: String(parsed.exampleTr || "").slice(0, 240).trim(),
+  };
+  if (!out.definitionTr && !out.exampleTr) throw new Error("Çeviri üretilemedi.");
+  if (translateCache.size >= 8000) translateCache.delete(translateCache.keys().next().value);
+  translateCache.set(key, out);
+  return out;
+}
+
+// Görsel arama sorgusu + "fotoğraflanabilir mi" kararı.
+// SORUN: Pexels'te ham kelimeyle arama yapınca soyut kelimeler ("although", "opinion")
+// için alakasız, çok anlamlı kelimeler için YANLIŞ fotoğraf geliyordu
+// (bank → nehir kıyısı mı banka mı? light → ışık mı hafif mi?).
+// ÇÖZÜM: Kelime başına BİR kez Gemini'ye sor — fotoğrafla anlatılabilir mi, anlatılabilirse
+// hangi arama terimi doğru sonucu getirir. Kalıcı önbellek → tüm kullanıcılar paylaşır.
+const imgQueryCache = new Map();
+export async function imageQueryFor(en, tr, definition) {
+  const key = String(en).toLowerCase();
+  if (imgQueryCache.has(key)) return imgQueryCache.get(key);
+  if (!KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
+  const prompt = `English word: "${en}" (Turkish meaning: ${String(tr || "").slice(0, 60)}; definition: ${String(definition || "").slice(0, 160)}).
+1) Can this word's meaning be shown CLEARLY in a single photograph? Abstract/function words (although, however, opinion, despite) CANNOT — answer false for those. Concrete nouns, actions and visible qualities CAN.
+2) If yes, give the BEST English photo-stock search query (2-4 words) that returns a photo unmistakably showing THIS meaning. Disambiguate polysemous words using the definition (e.g. "bank" money -> "bank teller counter"; "spring" season -> "spring blossom field").
+Return ONLY JSON: {"depictable": boolean, "query": string}`;
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 120, thinkingConfig: { thinkingBudget: 0 } },
+  };
+  const txt = await geminiText(body, { timeout: 18000, tries: 2 });
+  let parsed; try { parsed = JSON.parse(extractJson(txt)); } catch (e) { throw new Error("AI yanıtı çözümlenemedi."); }
+  const out = {
+    depictable: !!parsed.depictable,
+    query: String(parsed.query || "").slice(0, 60).trim(),
+  };
+  if (!out.query) out.depictable = false;      // sorgu yoksa güvenli tarafta kal
+  if (imgQueryCache.size >= 8000) imgQueryCache.delete(imgQueryCache.keys().next().value);
+  imgQueryCache.set(key, out);
+  return out;
+}
+
 const exampleCache = new Map();
 export async function generateExample(en, tr, level, context) {
   const lvl = ["A1", "A2", "B1", "B2", "C1", "C2"].includes(level) ? level : "B1";

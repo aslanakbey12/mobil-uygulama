@@ -293,6 +293,25 @@ app.post("/word/mnemonic", async (req, reply) => {
   }
 });
 
+// Kelime kartçığı çevirisi: İngilizce tanım + örnek cümle → Türkçe.
+// Kullanıcı alıştırmada kartçığa dokununca Türkçesini görür. Sunucuda kalıcı önbellek →
+// aynı kelime tüm kullanıcılar için bir kez çevrilir. Ayrı (yüksek) kota kullanır.
+app.post("/word/translate", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!reading.readingConfigured()) return reply.code(503).send({ error: "AI servisi yakında etkinleşecek." });
+  if (!aiquota.underTranslateCap(userId)) return reply.code(429).send({ error: "Bugünlük çeviri hakkın doldu, yarın tekrar dene." });
+  const { en, definition, example } = req.body || {};
+  if (!en) return reply.code(400).send({ error: "kelime gerekli" });
+  aiquota.bumpTranslate(userId);
+  try {
+    const tr = await reading.translateWordCard(String(en).slice(0, 40), definition, example);
+    return { tr };
+  } catch (e) {
+    return reply.code(502).send({ error: String(e.message || e) });
+  }
+});
+
 // Kelime fotoğrafı oyu (👍/👎) — beğenilen foto herkes için öne çıkar, beğenilmeyen elenir
 app.post("/word/image/rate", async (req, reply) => {
   const userId = getUserId(req);
@@ -334,11 +353,23 @@ app.post("/word/image", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!images.imagesConfigured()) return reply.code(503).send({ error: "Görsel servisi yakında." });
-  const { en } = req.body || {};
+  const { en, tr, definition } = req.body || {};
   if (!en) return reply.code(400).send({ error: "kelime gerekli" });
+  const word = String(en).slice(0, 40);
   try {
-    const image = await images.fetchWordImage(String(en).slice(0, 40));
-    return { image };
+    // AI'ya bir kez sor: fotoğraflanabilir mi + doğru arama terimi ne?
+    // (Önbellekli; AI yoksa/hata verirse eski davranışa — ham kelimeyle arama — düşülür.)
+    let q = null;
+    if (reading.readingConfigured()) {
+      try {
+        const iq = await reading.imageQueryFor(word, tr, definition);
+        // Soyut/işlev kelimesi → alakasız foto göstermektense HİÇ gösterme.
+        if (!iq.depictable) return { image: { photos: [], depictable: false } };
+        q = iq.query;
+      } catch (_) { /* AI erişilemedi → ham kelimeyle devam */ }
+    }
+    const image = await images.fetchWordImage(word, q);
+    return { image: { ...image, depictable: true } };
   } catch (e) {
     return reply.code(502).send({ error: String(e.message || e) });
   }
