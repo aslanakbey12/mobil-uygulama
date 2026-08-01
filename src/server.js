@@ -19,6 +19,8 @@ import { rateLimited } from "./ratelimit.js";
 // AI sohbet sınırları — maliyet + pedagoji (oturumun net bir sonu olsun).
 const AI_MAX_TURNS = parseInt(process.env.AI_CHAT_MAX_TURNS || "22", 10);   // tur limiti → sonra ders özeti
 const AI_MIN_GAP_MS = parseInt(process.env.AI_CHAT_MIN_GAP_MS || "1500", 10); // spam koruması
+const INVITE_TTL_MIN = parseInt(process.env.INVITE_TTL_MIN || "30", 10);   // oda daveti ömrü (dk)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;   // DM filtre enjeksiyonuna karşı
 
 // Sesli tur odası klipleri ikili (binary) gelir — Fastify'a parser tanıt
 voiceroom.setBroadcaster((roomName, members, payload) => {
@@ -890,13 +892,87 @@ app.post("/friends/invite", async (req, reply) => {
   return { room: { name: room.name, level: room.level, mode: room.mode, topic: room.topic, code: room.code, members: room.members.map(x => ({ name: x.name })), size: room.members.length } };
 });
 
+// ── ASENKRON ARKADAŞ MESAJLAŞMASI (DM) ───────────────────────────────────────
+// Eşzamanlı "odama gel" daveti yerine kalıcı sohbet: arkadaş ne zaman açarsa okur.
+// Yalnız gerçek arkadaşlar yazışabilir; her mesaj moderasyondan geçer.
+async function areFriends(db, a, b) {
+  const { data } = await db.from("friendships").select("friend_id").eq("user_id", a).eq("friend_id", b).maybeSingle();
+  return !!data;
+}
+
+app.post("/dm/send", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return reply.code(503).send({ error: "Mesajlaşma yakında." });
+  const to = String(req.body?.toUserId || "");
+  const raw = String(req.body?.text || "").slice(0, 1000).trim();
+  if (!to || !raw) return reply.code(400).send({ error: "alıcı ve mesaj gerekli" });
+  if (to === userId) return reply.code(400).send({ error: "kendine mesaj gönderemezsin" });
+  if (mod.areBlocked(userId, to)) return reply.code(403).send({ error: "Bu kullanıcıya mesaj gönderilemez." });
+  if (!(await areFriends(db, userId, to))) return reply.code(403).send({ error: "Sadece arkadaşlarına mesaj gönderebilirsin." });
+
+  // İçerik güvenliği: küfür maskele, ağır uygunsuzlukta hiç kaydetme.
+  const m = moderateChat(raw);
+  if (m.blocked) return reply.code(400).send({ error: "Mesaj topluluk kurallarına uymadığı için gönderilmedi." });
+
+  const { data, error } = await db.from("dm_messages")
+    .insert({ from_user: userId, to_user: to, text: m.clean })
+    .select("id, from_user, to_user, text, created_at").single();
+  if (error) return reply.code(500).send({ error: "Mesaj kaydedilemedi." });
+
+  const { data: me } = await db.from("profiles").select("name, username").eq("id", userId).maybeSingle();
+  const who = me?.name || me?.username || "Arkadaşın";
+  sendPush(to, { title: `💬 ${who}`, body: m.clean.slice(0, 120), data: { screen: "ChatTab" } });
+  return { message: data };
+});
+
+// İki kişi arasındaki sohbet dizisi (en yeniden eskiye çekip istemcide sıralanır).
+app.get("/dm/thread", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return { messages: [] };
+  const other = String(req.query?.withUserId || "");
+  // GÜVENLİK: bu değer aşağıdaki .or() filtre METNİNE gömülüyor. Kullanıcı kontrollü olduğu
+  // için doğrulanmadan geçerse PostgREST filtre söz dizimi enjekte edilebilir → UUID şartı.
+  if (!UUID_RE.test(other)) return reply.code(400).send({ error: "geçersiz kullanıcı" });
+  // Yalnız arkadaşının dizisini okuyabilirsin (yabancının mesajları görünmesin).
+  if (!(await areFriends(db, userId, other))) return reply.code(403).send({ error: "Bu kişiyle arkadaş değilsin." });
+  const { data } = await db.from("dm_messages")
+    .select("id, from_user, to_user, text, created_at, read_at")
+    .or(`and(from_user.eq.${userId},to_user.eq.${other}),and(from_user.eq.${other},to_user.eq.${userId})`)
+    .order("created_at", { ascending: false }).limit(100);
+  const messages = (data || []).reverse();
+  // Karşıdan gelenleri okundu işaretle
+  await db.from("dm_messages").update({ read_at: new Date().toISOString() })
+    .eq("from_user", other).eq("to_user", userId).is("read_at", null);
+  return { messages };
+});
+
+// Okunmamış mesaj sayıları (arkadaş listesinde rozet).
+app.get("/dm/unread", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const db = supa();
+  if (!db) return { unread: {}, total: 0 };
+  const { data } = await db.from("dm_messages")
+    .select("from_user").eq("to_user", userId).is("read_at", null).limit(500);
+  const unread = {};
+  for (const r of data || []) unread[r.from_user] = (unread[r.from_user] || 0) + 1;
+  return { unread, total: (data || []).length };
+});
+
 // Bekleyen davetler (son 3 dk) — Sosyal'de banner
 app.get("/friends/invites", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   const db = supa();
   if (!db) return { invites: [] };
-  const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+  // Davet ömrü 3 dk ÇOK KISAYDI: karşı taraf o anda uygulamada değilse davet sessizce
+  // ölüyor, davet eden boş odada bekliyordu. 30 dk daha gerçekçi (bildirimi görüp
+  // dönmeye zaman tanır). Kalıcı yazışma için asenkron DM var.
+  const since = new Date(Date.now() - INVITE_TTL_MIN * 60 * 1000).toISOString();
   const { data } = await db.from("room_invites").select("id, from_name, room_code, mode")
     .eq("to_user", userId).gt("created_at", since).order("created_at", { ascending: false }).limit(5);
   return { invites: data || [] };
