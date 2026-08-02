@@ -26,6 +26,25 @@ export function fallbackOpener(words, botName) {
     : `Hi! I'm ${botName}. Let's practice English together. How are you today?`;
 }
 
+// Model cevap veremediğinde SOHBET ÖLMESİN diye yerel yedek.
+//
+// NEDEN: generateReply boş yanıtta hata fırlatıyor, sunucu da yalnızca "typing_stop"
+// gönderiyordu → kullanıcı "yazıyor…" görüyor, sonra HİÇBİR ŞEY gelmiyordu. Sohbet
+// sessizce ölüyordu (gerçek kullanıcı şikâyeti). Artık her zaman bir cevap gider.
+const FALLBACK_REPLIES = [
+  "Sorry, I lost my train of thought! Can you say that again?",
+  "Hmm, my connection was slow. Could you repeat that?",
+  "I missed that — tell me one more time?",
+];
+export function fallbackReply(words, seed = 0) {
+  const w = (words || [])[Math.abs(seed) % Math.max(1, (words || []).length)];
+  const base = FALLBACK_REPLIES[Math.abs(seed) % FALLBACK_REPLIES.length];
+  const suggestions = w
+    ? ["Yes, of course", "Let me try again", `About "${w}"`]
+    : ["Yes, of course", "Let me try again", "Ask me something"];
+  return { reply: base, suggestions, fallback: true };
+}
+
 // Sohbet sonrası "ders özeti": öğrencinin mesajlarından kullanılan hedef kelimeler +
 // nazik düzeltmeler (max 3) + kısa Türkçe övgü. Sohbeti gerçek bir derse çevirir.
 export async function generateRecap(messages, words, level) {
@@ -103,9 +122,11 @@ Return ONLY JSON: {"reply": string, "suggestions": [string, string, string]}`;
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: { responseMimeType: "application/json", temperature: 0.9, maxOutputTokens: 220, thinkingConfig: { thinkingBudget: 0 } },
   };
-  // Hızlı başarısızlık: model başına tek deneme, kısa timeout (yapışkan model zaten
-  // çalışanı öne alıyor; takılırsak beklemeden sonrakine geçelim).
-  const txt = await geminiText(body, { timeout: 9000, tries: 1 });
+  // Yapışkan model zaten çalışanı öne alıyor. Ama TEK deneme + 9 sn, model bir anlık
+  // yavaşladığında sohbeti komple düşürüyordu (gerçek kullanıcı: "yazıyor çıktı,
+  // mesaj gelmedi"). 2 deneme + 12 sn: hâlâ hızlı başarısızlık, ama tek bir
+  // gecikme yüzünden sohbet kopmuyor. Yine de olmazsa çağıran taraf yedeğe düşer.
+  const txt = await geminiText(body, { timeout: 12000, tries: 2 });
   let parsed; try { parsed = JSON.parse(extractJson(txt)); } catch (_) { parsed = { reply: txt }; }
   const reply = String(parsed.reply || "").trim().replace(/^["'“”]+|["'“”]+$/g, "").slice(0, 400);
   const suggestions = (Array.isArray(parsed.suggestions) ? parsed.suggestions : [])

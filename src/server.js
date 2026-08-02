@@ -191,29 +191,58 @@ app.register(async function (appWs) {
 
           // Hız sınırı: script/spam ile saniyede onlarca AI çağrısı yapılmasın.
           // (/ws global IP limitinden muaf olduğu için bu koruma burada gerekli.)
+          // NOT: Bu yol da artık SESSİZ değil — kullanıcı neden cevap gelmediğini görür.
           const nowMs = Date.now();
           if (room.aiLastCall && nowMs - room.aiLastCall < AI_MIN_GAP_MS) {
+            room.aiTurns = Math.max(0, room.aiTurns - 1);   // sayılmayan mesaj turu yakmasın
             sockets.push(userId, { type: "typing_stop" });
+            sockets.push(userId, {
+              type: "chat", from: room.ai.id, name: room.ai.name, ai: true, ts: Date.now(),
+              text: "One moment — I'm still reading your last message! 🙂",
+            });
             return;
           }
           room.aiLastCall = nowMs;
 
-          // Günlük AI kotası aşıldıysa yanıt üretme (maliyet koruması); mesaj yine de iletildi.
-          if (!aiquota.underAiCap(userId)) { sockets.push(userId, { type: "typing_stop" }); return; }
-          aiquota.bumpAi(userId);
+          // Günlük AI kotası aşıldıysa yanıt üretme (maliyet koruması) ama kullanıcıyı
+          // sessizlikte bırakma — ne olduğunu söyle.
+          if (!aiquota.underAiCap(userId)) {
+            room.aiTurns = Math.max(0, room.aiTurns - 1);
+            sockets.push(userId, { type: "typing_stop" });
+            sockets.push(userId, {
+              type: "chat", from: room.ai.id, name: room.ai.name, ai: true, ts: Date.now(),
+              text: "We've practiced a lot today! Let's continue tomorrow. 👋",
+            });
+            sockets.push(userId, { type: "ai_session_end", reason: "quota" });
+            return;
+          }
           sockets.push(userId, { type: "typing", name: room.ai.name });
-          chatAI.generateReply(room.aiHistory, room.focusWords, room.level, room.ai.name)
-            .then(({ reply, suggestions }) => {
-              if (!reply || !getRoom(room.name)) return; // oda kapandıysa geç
+
+          // Cevabı GARANTİ et: model boş dönerse/hata verirse yerel yedek gönderilir.
+          // Eskiden bu yollarda yalnızca "typing_stop" gidiyordu → kullanıcı "yazıyor…"
+          // görüp sonra hiçbir şey almıyordu ve sohbet sessizce ölüyordu.
+          const sendReply = ({ reply, suggestions, fallback }) => {
+            if (!getRoom(room.name)) return;              // oda kapandı → geç
+            if (fallback) room.aiTurns = Math.max(0, room.aiTurns - 1);  // başarısız tur sayılmasın
+            else {
+              aiquota.bumpAi(userId);                     // kota SADECE başarılı cevapta yanar
               room.aiHistory.push({ mine: false, text: reply });
               if (room.aiHistory.length > 20) room.aiHistory = room.aiHistory.slice(-20);
-              sockets.push(userId, {
-                type: "chat", from: room.ai.id, name: room.ai.name, text: reply, ts: Date.now(), ai: true,
-                suggestions,                                   // 💡 dokunulabilir cevap önerileri
-                turnsLeft: Math.max(0, AI_MAX_TURNS - room.aiTurns),
-              });
+            }
+            sockets.push(userId, { type: "typing_stop" });
+            sockets.push(userId, {
+              type: "chat", from: room.ai.id, name: room.ai.name, text: reply, ts: Date.now(), ai: true,
+              suggestions,                                   // 💡 dokunulabilir cevap önerileri
+              turnsLeft: Math.max(0, AI_MAX_TURNS - room.aiTurns),
+            });
+          };
+
+          chatAI.generateReply(room.aiHistory, room.focusWords, room.level, room.ai.name)
+            .then((r) => {
+              if (r && r.reply) sendReply(r);
+              else sendReply(chatAI.fallbackReply(room.focusWords, room.aiTurns));
             })
-            .catch(() => sockets.push(userId, { type: "typing_stop" }));
+            .catch(() => sendReply(chatAI.fallbackReply(room.focusWords, room.aiTurns)));
         }
         return;
       }
