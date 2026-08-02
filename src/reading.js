@@ -7,6 +7,8 @@ const KEY = process.env.GEMINI_API_KEY || "";
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 const DAILY_CAP = parseInt(process.env.READING_DAILY_CAP || "20", 10);
 
+import { underGlobalCap, bumpGlobal } from "./aiquota.js";
+
 export const readingConfigured = () => !!KEY;
 
 // Geçici teşhis: adaylarda GERÇEKTEN üretim yap, hangisi çalışıyor gör.
@@ -43,12 +45,16 @@ const daily = new Map();       // userId -> { day, n }
 
 function today() { return new Date().toISOString().slice(0, 10); }
 
+// Kullanıcı tavanının yanında SİSTEM GENELİ freni de kontrol edilir
+// (bkz. aiquota.js — kullanıcı başına tavanlar tek başına toplam harcamayı sınırlamıyordu).
 export function underDailyCap(userId) {
+  if (!underGlobalCap()) return false;
   const e = daily.get(userId);
   if (!e || e.day !== today()) return true;
   return e.n < DAILY_CAP;
 }
 export function bumpDaily(userId) {
+  bumpGlobal(1);
   const d = today(); const e = daily.get(userId);
   if (!e || e.day !== d) daily.set(userId, { day: d, n: 1 });
   else e.n++;

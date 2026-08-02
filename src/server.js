@@ -288,7 +288,9 @@ app.get("/health", async () => ({
   rooms: roomStats(),
   sockets: sockets.count(),
   moderation: mod.moderationStats(),
-  league: league.leagueStats()
+  league: league.leagueStats(),
+  // Sistem geneli günlük YZ harcaması — freni izleyebilelim (kaç/tavan)
+  ai: aiquota.globalUsage()
 }));
 
 // Okuma: kullanıcının öğrenme kelimelerinden seviyesine uygun parça + sorular üret
@@ -823,7 +825,17 @@ app.get("/friends", async (req, reply) => {
   const ids = (rows || []).map(r => r.friend_id);
   if (!ids.length) return { friends: [] };
   // İsim kaynağı: profiles (name → username). Kullanıcı adı zaten benzersiz ve her hesapta var.
-  const { data: profs } = await db.from("profiles").select("id, name, username").in("id", ids);
+  // avatar: kullanıcının seçtiği emoji (bkz. db/11_avatar.sql). Sütun henüz eklenmemişse
+  // sorgu hata verir → avatarsız sürüme düşülür, arkadaş listesi yine çalışır.
+  let profs = null;
+  try {
+    const r = await db.from("profiles").select("id, name, username, avatar").in("id", ids);
+    if (!r.error) profs = r.data;
+  } catch (_) {}
+  if (!profs) {
+    const r2 = await db.from("profiles").select("id, name, username").in("id", ids);
+    profs = r2.data;
+  }
   const byId = Object.fromEntries((profs || []).map(p => [p.id, p]));
   // Aktiflik özeti (service-role → arkadaşların satırlarını okuyabiliriz)
   const { data: stats } = await db.from("user_stats").select("user_id, last_active, streak, xp, learned").in("user_id", ids);
@@ -833,6 +845,7 @@ app.get("/friends", async (req, reply) => {
     return {
       id,
       name: byId[id]?.name || byId[id]?.username || "Arkadaş",
+      avatar: byId[id]?.avatar || null,
       lastActive: st.last_active || null,
       streak: st.streak || 0,
       xp: st.xp || 0,
@@ -1026,12 +1039,15 @@ app.post("/account/delete", async (req, reply) => {
   return { ok: true };
 });
 
-// LiveKit webhook
-app.post("/livekit/webhook", async (req, reply) => {
-  const event = req.body || {};
-  app.log.info({ type: event.event, room: event.room?.name, participant: event.participant?.identity }, "livekit webhook");
-  return reply.code(200).send({ received: true });
-});
+// KALDIRILDI: /livekit/webhook
+//
+// Sesli Oda LiveKit ile DEĞİL, sıra tabanlı kayıtlı klip mimarisiyle çalışıyor
+// (voiceroom.js + /voiceroom/clip + expo-av). LiveKit hiç yapılandırılmadı
+// (/health → livekit:false) ve bu webhook hiçbir zaman çağrılmadı.
+// Kimlik doğrulaması olmayan TEK uçtu (imza doğrulaması da yoktu): herkes POST
+// atıp log şişirebiliyordu. Ölü + korumasız olduğu için kaldırıldı.
+// Not: /token ucu duruyor — kimlik doğrulamalı ve zararsız; app tarafında
+// api.token() tanımlı ama hiçbir yerden çağrılmıyor.
 
 // Oda kapandığında oyun/ses odası bellek state'ini de temizle (sızıntı önlemi).
 onRoomClose((name) => {
