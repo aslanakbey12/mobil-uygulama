@@ -691,6 +691,43 @@ app.post("/friends/code", async (req, reply) => {
   return { code, name };
 });
 
+// Kullanıcı adı müsait mi? + müsait ÖNERİLER.
+//
+// NEDEN SUNUCUDA: profiles tablosunda RLS `auth.uid() = id` — istemci başkasının
+// satırını okuyamaz, dolayısıyla "alınmış mı" sorusunu cevaplayamaz (her zaman
+// "boş" görünür). Sunucu service-role ile RLS'i aştığı için doğru cevabı burası verir.
+//
+// Gerçek kullanıcı şikâyeti: 4 adımlık profil sihirbazını doldurup EN SONDA
+// "kullanıcı adı alınmış" hatası alıyor ve başa atılıyordu. Artık daha ilk adımda
+// öğreniyor ve önerilen boş adlardan birine tek dokunuşla geçebiliyor.
+app.get("/profile/username-check", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const raw = String(req.query?.u || "").trim();
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(raw)) {
+    return { available: false, invalid: true, suggestions: [] };
+  }
+  const db = supa();
+  if (!db) return { available: true, suggestions: [] };   // DB yoksa engelleme
+
+  const lower = raw.toLowerCase();
+  // Aday havuzu: istenen ad + sayılı/eklemeli varyantlar. Tek sorguda kontrol edilir.
+  const cands = [raw];
+  for (let i = 1; i <= 3; i++) cands.push(`${raw}${Math.floor(Math.random() * 90) + 10}`);
+  cands.push(`${raw}_${new Date().getFullYear() % 100}`);
+  cands.push(`${raw}_tr`);
+
+  const { data } = await db.from("profiles").select("id, username").in("username", cands);
+  const takenSet = new Set((data || []).map((r) => String(r.username || "").toLowerCase()));
+  // Kendi adın "alınmış" sayılmaz (profilini güncelliyor olabilirsin)
+  const mine = (data || []).find((r) => r.id === userId);
+  if (mine && String(mine.username || "").toLowerCase() === lower) takenSet.delete(lower);
+
+  const available = !takenSet.has(lower);
+  const suggestions = available ? [] : cands.slice(1).filter((c) => !takenSet.has(c.toLowerCase())).slice(0, 3);
+  return { available, suggestions };
+});
+
 // Kodla arkadaş ekle (çift yönlü yazılır)
 app.post("/friends/add", async (req, reply) => {
   const userId = getUserId(req);
