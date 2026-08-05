@@ -1,81 +1,130 @@
-// AI uçları için kullanıcı başına GÜNLÜK çağrı sınırı (maliyet/DoS koruması).
-// Gemini/dış servis çağrısı yapan uçlar bunu kontrol eder → tek kullanıcı binlerce
-// istekle kotayı (ve faturayı) tüketemez. Bellek içi; ölçekte Redis'e taşınır.
-const CAP = parseInt(process.env.AI_DAILY_CAP || "300", 10);
+// YZ uçları için kota: kullanıcı başına GÜNLÜK sınır + SİSTEM GENELİ tavan.
+//
+// KALICILIK (db/12_perf_quota.sql):
+// Sayaçlar eskiden yalnızca süreç belleğindeydi. Render her dağıtımda ve her uyku
+// sonrası süreci yeniden başlattığı için kotalar sıfırlanıyordu — koruma, dağıtım
+// yapılarak (ya da servis uyuyup uyanarak) baypas edilebiliyordu.
+// Şimdi: bellek HIZLI YOL olarak kalır (her çağrıda DB'ye gitmeyiz), ama açılışta
+// bugünün sayaçları yüklenir ve çalışırken periyodik olarak yazılır.
+import { supa } from "./supabase.js";
 
-const counts = new Map(); // userId -> { day, n }
+const CAP = parseInt(process.env.AI_DAILY_CAP || "300", 10);
+const TR_CAP = parseInt(process.env.AI_TRANSLATE_DAILY_CAP || "600", 10);
+const GLOBAL_CAP = parseInt(process.env.AI_GLOBAL_DAILY_CAP || "20000", 10);
+const FLUSH_MS = parseInt(process.env.AI_QUOTA_FLUSH_MS || "60000", 10);
 
 function today() { return new Date().toISOString().slice(0, 10); }
 
-// Hem kullanıcı hem SİSTEM tavanına bakar. Global kontrol buraya gömülü —
-// böylece yeni bir YZ ucu eklendiğinde freni takmayı unutmak mümkün değil.
+// kind -> Map(userId -> { day, n })
+const mem = { ai: new Map(), translate: new Map() };
+let globalDay = today();
+let globalN = 0;
+const dirty = new Set();          // "kind|userId" — yazılmayı bekleyenler
+let globalDirty = false;
+
+// ── BELLEK TEMİZLİĞİ ──────────────────────────────────────────────────────────
+// Gün değişince sayaç sıfırlanıyordu ama KAYIT duruyordu: kullanıcı başına bir
+// ölü kayıt, sonsuza kadar. 10.000 kullanıcıda 10.000 ölü kayıt.
+// Artık her erişimde tembel temizlik + periyodik toplu süpürme yapılır.
+function sweep() {
+  const d = today();
+  for (const m of Object.values(mem)) {
+    for (const [k, v] of m) if (v.day !== d) m.delete(k);
+  }
+  if (globalDay !== d) { globalDay = d; globalN = 0; globalDirty = true; }
+}
+
+function get(kind, userId) {
+  const m = mem[kind];
+  const e = m.get(userId);
+  const d = today();
+  if (!e || e.day !== d) { const n = { day: d, n: 0 }; m.set(userId, n); return n; }
+  return e;
+}
+
+// ── KÜRESEL FREN ──────────────────────────────────────────────────────────────
+export function underGlobalCap() {
+  if (globalDay !== today()) { globalDay = today(); globalN = 0; globalDirty = true; }
+  return globalN < GLOBAL_CAP;
+}
+export function bumpGlobal(n = 1) {
+  if (globalDay !== today()) { globalDay = today(); globalN = 0; }
+  globalN += n;
+  globalDirty = true;
+}
+export function globalUsage() { return { used: globalN, cap: GLOBAL_CAP, day: globalDay }; }
+
+// ── KULLANICI KOTALARI ────────────────────────────────────────────────────────
+// Küresel kontrol İÇERİ GÖMÜLÜ: yeni bir YZ ucu eklenirken freni takmak unutulamaz.
 export function underAiCap(userId) {
   if (!userId) return false;
   if (!underGlobalCap()) return false;
-  const e = counts.get(userId);
-  if (!e || e.day !== today()) return true;
-  return e.n < CAP;
+  return get("ai", userId).n < CAP;
 }
-
 export function bumpAi(userId, n = 1) {
   bumpGlobal(n);
   if (!userId) return;
-  const d = today();
-  const e = counts.get(userId);
-  if (!e || e.day !== d) counts.set(userId, { day: d, n });
-  else e.n += n;
+  get("ai", userId).n += n;
+  dirty.add("ai|" + userId);
 }
-
 export function aiDailyCap() { return CAP; }
-
-// ── Çeviri kotası (AYRI ve daha yüksek) ───────────────────────────────────────
-// Kart çevirileri minik çağrılar (≈150 token) ve sunucuda kalıcı önbelleklenir —
-// aynı kelime hayatta bir kez çevrilir. Okuma/mnemonic ile aynı 300'lük kotayı
-// paylaşırlarsa çok kart açan kullanıcı asıl AI özelliklerini kaybeder. O yüzden ayrı.
-const TR_CAP = parseInt(process.env.AI_TRANSLATE_DAILY_CAP || "600", 10);
-const trCounts = new Map();
 
 export function underTranslateCap(userId) {
   if (!userId) return false;
   if (!underGlobalCap()) return false;
-  const e = trCounts.get(userId);
-  if (!e || e.day !== today()) return true;
-  return e.n < TR_CAP;
+  return get("translate", userId).n < TR_CAP;
 }
-
 export function bumpTranslate(userId, n = 1) {
   bumpGlobal(n);
   if (!userId) return;
-  const d = today();
-  const e = trCounts.get(userId);
-  if (!e || e.day !== d) trCounts.set(userId, { day: d, n });
-  else e.n += n;
+  get("translate", userId).n += n;
+  dirty.add("translate|" + userId);
 }
 
-// ── SİSTEM GENELİ günlük tavan (fren) ─────────────────────────────────────────
-//
-// NEDEN: Yukarıdaki tavanların hepsi KULLANICI BAŞINA. Tek kullanıcı faturayı
-// patlatamıyor ama 1000 kullanıcı × 300 çağrı = günde 300 bin çağrı ve sistemde
-// hiçbir fren yoktu. Bu sayaç tüm YZ çağrılarını (okuma + mnemonic + çeviri +
-// görsel sorgusu + sohbet) tek bir günlük bütçede toplar.
-//
-// Tavana gelindiğinde uygulama ÇÖKMEZ: çağıran uçlar 503 döndürür, istemci zaten
-// önbellek/yedek metne düşecek şekilde yazıldı. Bellek içi — süreç yeniden
-// başlarsa sıfırlanır; Render'da tek süreç olduğu için pratikte yeterli.
-const GLOBAL_CAP = parseInt(process.env.AI_GLOBAL_DAILY_CAP || "20000", 10);
-let globalDay = today();
-let globalN = 0;
-
-export function underGlobalCap() {
+// ── KALICILIK ─────────────────────────────────────────────────────────────────
+// Açılışta bugünün sayaçlarını yükle. DB yoksa/hata verirse sessizce bellekle devam
+// edilir — kota koruması bozulur ama servis ayakta kalır (fail-open BİLİNÇLİ:
+// kotayı okuyamadık diye kimseyi engellemek daha kötü).
+export async function loadQuotas() {
+  const db = supa();
+  if (!db) return;
   const d = today();
-  if (d !== globalDay) { globalDay = d; globalN = 0; }
-  return globalN < GLOBAL_CAP;
+  try {
+    const { data } = await db.from("ai_usage").select("user_id, kind, n").eq("day", d);
+    for (const r of data || []) {
+      if (mem[r.kind]) mem[r.kind].set(r.user_id, { day: d, n: r.n || 0 });
+    }
+    const { data: g } = await db.from("ai_usage_global").select("n").eq("day", d).maybeSingle();
+    if (g) { globalDay = d; globalN = g.n || 0; }
+  } catch (_) {}
 }
 
-export function bumpGlobal(n = 1) {
+export async function flushQuotas() {
+  const db = supa();
+  if (!db) return;
   const d = today();
-  if (d !== globalDay) { globalDay = d; globalN = n; return; }
-  globalN += n;
+  const rows = [];
+  for (const key of dirty) {
+    const [kind, userId] = key.split("|");
+    const e = mem[kind]?.get(userId);
+    if (e && e.day === d) rows.push({ day: d, user_id: userId, kind, n: e.n, updated_at: new Date().toISOString() });
+  }
+  dirty.clear();
+  try {
+    if (rows.length) await db.from("ai_usage").upsert(rows);
+    if (globalDirty) {
+      globalDirty = false;
+      await db.from("ai_usage_global").upsert({ day: globalDay, n: globalN, updated_at: new Date().toISOString() });
+    }
+  } catch (_) {}
 }
 
-export function globalUsage() { return { used: globalN, cap: GLOBAL_CAP, day: globalDay }; }
+let timer = null;
+export function startQuotaPersistence() {
+  if (timer) return;
+  timer = setInterval(() => { sweep(); flushQuotas(); }, FLUSH_MS);
+  if (timer.unref) timer.unref();   // süreç kapanışını engellemesin
+}
+export function stopQuotaPersistence() {
+  if (timer) { clearInterval(timer); timer = null; }
+}

@@ -14,7 +14,7 @@ import * as chatAI from "./chat_ai.js";
 import * as aiquota from "./aiquota.js";
 import { moderateChat } from "./textsafety.js";
 import { sendPush } from "./push.js";
-import { rateLimited } from "./ratelimit.js";
+import { rateLimited, aiRateLimited } from "./ratelimit.js";
 
 // AI sohbet sınırları — maliyet + pedagoji (oturumun net bir sonu olsun).
 const AI_MAX_TURNS = parseInt(process.env.AI_CHAT_MAX_TURNS || "22", 10);   // tur limiti → sonra ders özeti
@@ -29,7 +29,10 @@ voiceroom.setBroadcaster((roomName, members, payload) => {
 import { mintToken, livekitConfigured } from "./token.js";
 import { getUserId, authConfigured, verifyToken, tokenFromReq } from "./auth.js";
 import { supaConfigured, supa } from "./supabase.js";
-import { isPremium, setPremium } from "./entitlements.js";
+import { isPremium, setPremium, isAgeConfirmed } from "./entitlements.js";
+
+// Sosyal odaların yaş kapısı reddi. Tek metin: dört uçta da aynı şeyi söylemeli.
+const AGE_ERR = "Sosyal odalar 16 yaş ve üzeri içindir. Kelime çalışma bölümlerini kullanmaya devam edebilirsin.";
 import { canEnterRoom, recordRoomEntry, roomsUsedToday, freeDailyLimit } from "./quota.js";
 import { pickTopic } from "./topics.js";
 import { getRoom, roomStats, leaveRoom, createHostedRoom, getRoomByCode, addMember, createAiRoom, onRoomClose } from "./rooms.js";
@@ -37,6 +40,10 @@ import { getRoom, roomStats, leaveRoom, createHostedRoom, getRoomByCode, addMemb
 // Logger: istek URL'lerindeki token/access_token query paramlarını REDAKTE et.
 // (WS ve klip indirme token'ı query ile geçiyor → düz loglanırsa kısa ömürlü de olsa sızar.)
 const app = Fastify({
+  // Gövde sınırı: /progress istemciden büyük bir jsonb alıyor (ağır kullanıcıda
+  // ~700 KB). Fastify varsayılanı 1 MB — sınıra dayanıyorduk. Bilinçli 2 MB:
+  // ağır kullanıcıya yer bırakır, keyfi büyük gövdeyi yine reddeder.
+  bodyLimit: parseInt(process.env.BODY_LIMIT || "2097152", 10),
   logger: {
     serializers: {
       req(req) {
@@ -206,7 +213,8 @@ app.register(async function (appWs) {
 
           // Günlük AI kotası aşıldıysa yanıt üretme (maliyet koruması) ama kullanıcıyı
           // sessizlikte bırakma — ne olduğunu söyle.
-          if (!aiquota.underAiCap(userId)) {
+          if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
+  if (!aiquota.underAiCap(userId)) {
             room.aiTurns = Math.max(0, room.aiTurns - 1);
             sockets.push(userId, { type: "typing_stop" });
             sockets.push(userId, {
@@ -327,7 +335,17 @@ app.post("/reading/generate", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!reading.readingConfigured()) return reply.code(503).send({ error: "Okuma servisi yakında etkinleşecek." });
-  if (!reading.underDailyCap(userId)) return reply.code(429).send({ error: "Bugünlük okuma hakkın doldu, yarın tekrar dene." });
+  if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
+  // Tavan kademeye göre; premium'a yükseltme teklifi de sadece ücretsiz kullanıcıya gider.
+  const readPremium = await isPremium(userId);
+  if (!reading.underDailyCap(userId, readPremium)) {
+    return reply.code(429).send({
+      error: readPremium
+        ? "Bugünlük okuma hakkın doldu, yarın tekrar dene."
+        : `Bugünlük okuma hakkın doldu (günde ${reading.dailyCapFor(false)}). Premium ile günde ${reading.dailyCapFor(true)} parça oluşturabilirsin.`,
+      upgrade: !readPremium,
+    });
+  }
   const { level, words, knownSample, topic } = req.body || {};
   const list = Array.isArray(words) ? [...new Set(words.filter(Boolean).map(String))].slice(0, 8) : [];
   const known = Array.isArray(knownSample) ? knownSample.filter(Boolean).map(String).slice(0, 15) : [];
@@ -347,6 +365,7 @@ app.post("/word/mnemonic", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!reading.readingConfigured()) return reply.code(503).send({ error: "AI servisi yakında etkinleşecek." });
+  if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük AI hakkın doldu, yarın tekrar dene." });
   const { en, tr } = req.body || {};
   if (!en) return reply.code(400).send({ error: "kelime gerekli" });
@@ -366,6 +385,7 @@ app.post("/word/translate", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!reading.readingConfigured()) return reply.code(503).send({ error: "AI servisi yakında etkinleşecek." });
+  if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underTranslateCap(userId)) return reply.code(429).send({ error: "Bugünlük çeviri hakkın doldu, yarın tekrar dene." });
   const { en, definition, example } = req.body || {};
   if (!en) return reply.code(400).send({ error: "kelime gerekli" });
@@ -402,6 +422,7 @@ app.post("/word/example", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!reading.readingConfigured()) return reply.code(503).send({ error: "AI servisi yakında etkinleşecek." });
+  if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük AI hakkın doldu, yarın tekrar dene." });
   const { en, tr, level, context } = req.body || {};
   if (!en) return reply.code(400).send({ error: "kelime gerekli" });
@@ -489,8 +510,9 @@ app.get("/voiceroom/clip/:id", async (req, reply) => {
 app.post("/matchmaking/join", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
-  const { name, level, ageConfirmed, mode, pool } = req.body || {};
-  if (ageConfirmed !== true) return reply.code(403).send({ error: "Odalar için 16+ yaş onayı gerekir" });
+  const { name, level, mode, pool } = req.body || {};
+  // Yaş, gövdeden DEĞİL veritabanından okunur (bkz. entitlements.isAgeConfirmed).
+  if (!(await isAgeConfirmed(userId))) return reply.code(403).send({ error: AGE_ERR });
   return mm.join({ userId, name, level: level || "B1", mode, pool });
 });
 
@@ -584,6 +606,7 @@ app.get("/me/entitlement", async (req, reply) => {
 app.post("/rooms/create", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!(await isAgeConfirmed(userId))) return reply.code(403).send({ error: AGE_ERR });
   const premium = await isPremium(userId);
   if (!premium && !canEnterRoom(userId)) {
     return reply.code(402).send({ error: "limit", message: `Ücretsiz planda günde ${freeDailyLimit()} oda kurabilirsin. Premium ile sınırsız.`, upgrade: true });
@@ -606,6 +629,7 @@ app.post("/rooms/ai", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!chatAI.chatConfigured()) return reply.code(503).send({ error: "AI sohbet yakında etkinleşecek." });
+  if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük AI hakkın doldu, yarın tekrar dene." });
   aiquota.bumpAi(userId);
   const { level, name, words } = req.body || {};
@@ -630,6 +654,7 @@ app.post("/chat/recap", async (req, reply) => {
   const { messages, words, level } = req.body || {};
   const msgs = Array.isArray(messages) ? messages.slice(-20) : [];
   if (!msgs.some((m) => m && m.mine)) return { recap: null }; // öğrenci hiç yazmamış
+  if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return { recap: null };    // günlük AI kotası doldu → sessizce geç
   aiquota.bumpAi(userId);
   try {
@@ -644,6 +669,7 @@ app.post("/chat/recap", async (req, reply) => {
 app.post("/rooms/join", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!(await isAgeConfirmed(userId))) return reply.code(403).send({ error: AGE_ERR });
   const { code, name, pool } = req.body || {};
   if (!code) return reply.code(400).send({ error: "code gerekli" });
   const room = getRoomByCode(code);
@@ -955,6 +981,7 @@ app.post("/friends/block", async (req, reply) => {
 app.post("/friends/invite", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!(await isAgeConfirmed(userId))) return reply.code(403).send({ error: AGE_ERR });
   const db = supa();
   if (!db) return reply.code(503).send({ error: "Arkadaş sistemi yakında." });
   const { friendId, name, level, mode } = req.body || {};
@@ -1124,6 +1151,53 @@ onRoomClose((name) => {
 const PORT = parseInt(process.env.PORT || "3000", 10);
 mm.startSweeper();
 mod.loadBlocks().catch(() => {});
+// ── GÖZLEMLENEBİLİRLİK ────────────────────────────────────────────────────────
+// Sunucu kördü: hangi uç yavaş, kaç istek hata dönüyor bilmiyorduk.
+// Yavaş (>2 sn) ve hatalı (>=500) istekler loglanır; gürültü yapmasın diye
+// normal istekler loglanmaz.
+// Ham URL yerine ROTA KALIBI ("/word/:id") loglanır; yoksa her id ayrı satır olur
+// ve "hangi uç yavaş" sorusu cevapsız kalır. routeOptions.url fastify 5 yolu,
+// routerPath fastify 4 yolu — ikisi de yoksa ham url'e düşeriz.
+const routeOf = (req) => req.routeOptions?.url || req.routerPath || req.url;
+app.addHook("onResponse", async (req, reply) => {
+  const ms = reply.elapsedTime ?? 0;
+  const code = reply.statusCode;
+  if (code >= 500) app.log.error({ url: routeOf(req), code, ms: Math.round(ms) }, "istek hatası");
+  else if (ms > 2000) app.log.warn({ url: routeOf(req), code, ms: Math.round(ms) }, "yavaş istek");
+});
+
+// ── AÇILIŞ / KAPANIŞ ──────────────────────────────────────────────────────────
 app.listen({ port: PORT, host: "0.0.0.0" })
-  .then(() => app.log.info(`Sunucu http://localhost:${PORT} üzerinde çalışıyor`))
+  .then(async () => {
+    app.log.info(`Sunucu http://localhost:${PORT} üzerinde çalışıyor`);
+    // Kotaları kalıcı depodan yükle (dağıtım/uyku kotayı sıfırlamasın) + periyodik yazma
+    try { await aiquota.loadQuotas(); } catch (_) {}
+    aiquota.startQuotaPersistence();
+    // VERİ SAKLAMA: eski kayıtları temizle (db/13_feedback_retention.sql).
+    // Açılışta bir kez + günde bir. Fonksiyon yoksa sessizce geçilir.
+    const purge = () => { const db = supa(); if (db) db.rpc("purge_old_data").then(() => {}, () => {}); };
+    purge();
+    const purgeTimer = setInterval(purge, 24 * 60 * 60 * 1000);
+    if (purgeTimer.unref) purgeTimer.unref();
+  })
   .catch((err) => { app.log.error(err); process.exit(1); });
+
+// DÜZGÜN KAPANMA.
+// Render her dağıtımda süreci öldürüyor. Eskiden açık WebSocket'ler ANİDEN kopuyor,
+// bekleyen kota yazmaları kayboluyordu. Artık: istemcilere haber ver → kotaları yaz →
+// sunucuyu kapat. Süre aşılırsa yine de çık (asılı kalmasın).
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  app.log.info({ signal }, "kapanıyor");
+  const hardExit = setTimeout(() => process.exit(0), 8000);
+  if (hardExit.unref) hardExit.unref();
+  try { sockets.broadcastAll?.({ type: "server_restart" }); } catch (_) {}
+  try { aiquota.stopQuotaPersistence(); await aiquota.flushQuotas(); } catch (_) {}
+  try { await app.close(); } catch (_) {}
+  clearTimeout(hardExit);
+  process.exit(0);
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

@@ -1,3 +1,4 @@
+import { supa } from "./supabase.js";
 // Okuma parçası üretimi (Google Gemini). API anahtarı YALNIZCA sunucuda (GEMINI_API_KEY).
 // Kullanıcının öğrenme havuzundaki kelimelerden, seviyesine uygun kısa bir metin +
 // 3 anlama sorusu üretir. Kota tasarrufu için üretilenler önbelleğe alınır.
@@ -5,7 +6,19 @@ const KEY = process.env.GEMINI_API_KEY || "";
 // Not: eski modeller (2.0, 2.5-flash) yeni kullanıcılara kapatıldı. "flash-latest"
 // her zaman güncel GA flash'a (şu an 3.5-flash) çözülür ve yeni kullanıcılara açıktır.
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
-const DAILY_CAP = parseInt(process.env.READING_DAILY_CAP || "20", 10);
+// Günlük okuma üretimi tavanı — KADEMEYE DUYARLI.
+//
+// Eskiden tek sayıydı (20) ve premium'a bakmıyordu. İki ayrı sorun yaratıyordu:
+// (1) paywall "sınırsız okuma" vaat ediyordu ama premium de 20'de duvara çarpıyordu;
+// (2) ücretsiz kullanıcı günde 20 Gemini üretimi yapabiliyordu — vaat edilenin
+// 20 katı ve ölçekte karşılanamaz bir maliyet.
+// Her parça bir YZ çağrısıdır; bu yüzden premium de "sınırsız" değil, yüksek tavanlı.
+const DAILY_CAP = parseInt(process.env.READING_DAILY_CAP || "3", 10);
+const DAILY_CAP_PREMIUM = parseInt(process.env.READING_DAILY_CAP_PREMIUM || "30", 10);
+
+export function dailyCapFor(premium = false) {
+  return premium ? DAILY_CAP_PREMIUM : DAILY_CAP;
+}
 
 import { underGlobalCap, bumpGlobal } from "./aiquota.js";
 
@@ -47,11 +60,18 @@ function today() { return new Date().toISOString().slice(0, 10); }
 
 // Kullanıcı tavanının yanında SİSTEM GENELİ freni de kontrol edilir
 // (bkz. aiquota.js — kullanıcı başına tavanlar tek başına toplam harcamayı sınırlamıyordu).
-export function underDailyCap(userId) {
+export function underDailyCap(userId, premium = false) {
   if (!underGlobalCap()) return false;
   const e = daily.get(userId);
   if (!e || e.day !== today()) return true;
-  return e.n < DAILY_CAP;
+  return e.n < dailyCapFor(premium);
+}
+
+// Kullanıcının bugün kaç hakkı kaldı (arayüzde dürüstçe göstermek için).
+export function remainingToday(userId, premium = false) {
+  const e = daily.get(userId);
+  const used = e && e.day === today() ? e.n : 0;
+  return Math.max(0, dailyCapFor(premium) - used);
 }
 export function bumpDaily(userId) {
   bumpGlobal(1);
@@ -387,10 +407,23 @@ export function rateReading(key, up) {
   const f = readingFeedback.get(key) || { up: 0, down: 0 };
   if (up) f.up++; else f.down++;
   readingFeedback.set(key, f);
+  // KALICI KAYIT: bu sinyal eskiden yalnızca bellekteydi ve her dağıtımda çöpe
+  // gidiyordu. Artık DB'ye de yazılır → hangi parçaların beğenilmediğini zaman
+  // içinde görebiliriz (içerik kalitesi için tek gerçek geri bildirimimiz).
+  persistFeedback("reading", key, f);
   if (f.down >= 3 && f.down > f.up) {           // eşik: 3+ olumsuz ve olumsuz > olumlu
     cache.delete(key);                           // önbellekten çıkar → yeniden üretilir
     readingFeedback.delete(key);
     return { replaced: true };
   }
   return { replaced: false };
+}
+
+// Ateşle-unut: yazma başarısız olursa kullanıcı akışı ETKİLENMEZ.
+export function persistFeedback(kind, ref, f) {
+  const db = supa();
+  if (!db) return;
+  db.from("content_feedback")
+    .upsert({ kind, ref: String(ref).slice(0, 300), up: f.up, down: f.down, updated_at: new Date().toISOString() })
+    .then(() => {}, () => {});
 }

@@ -9,8 +9,14 @@ const CACHE_CAP = 8000;
 
 // Kalabalık-kaynaklı foto puanı: 👍 alan foto herkes için öne çıkar (sabitlenir),
 // 👎 alan düşer; -3'e inen aday listeden elenir → kötü foto kendini temizler.
+// Kapak: bu iki harita hiç temizlenmiyordu (kelime × url × oy veren) → sınırsız büyüme.
+const VOTE_CAP = 20000;
 const imgVotes = new Map(); // en -> Map(url -> skor)
-const imgVoters = new Map(); // `en|url` -> Set(userId) — bir kullanıcı aynı fotoya bir kez oy verir
+const imgVoters = new Map();
+function capVotes() {
+  while (imgVotes.size > VOTE_CAP) imgVotes.delete(imgVotes.keys().next().value);
+  while (imgVoters.size > VOTE_CAP) imgVoters.delete(imgVoters.keys().next().value);
+} // `en|url` -> Set(userId) — bir kullanıcı aynı fotoya bir kez oy verir
 
 export function rateWordImage(en, url, up, userId) {
   const k = String(en || "").trim().toLowerCase();
@@ -22,7 +28,7 @@ export function rateWordImage(en, url, up, userId) {
   if (voters.has(userId)) return { ok: true, dup: true };
   voters.add(userId);
   let m = imgVotes.get(k);
-  if (!m) { m = new Map(); imgVotes.set(k, m); }
+  if (!m) { m = new Map(); imgVotes.set(k, m); capVotes(); }
   m.set(url, (m.get(url) || 0) + (up ? 1 : -1));
   return { ok: true, score: m.get(url) };
 }

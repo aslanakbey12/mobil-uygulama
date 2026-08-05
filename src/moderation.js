@@ -3,6 +3,8 @@ import { supa } from "./supabase.js";
 
 const blocks = new Map();   // userId -> Set(blockedUserId)  (eşleştirme için hızlı önbellek)
 const reports = [];         // son raporların bellek kopyası
+// Kapak: oda kapansa da kayıt kalıyordu → sınırsız büyüme.
+const REPORT_CAP = 5000;
 const roomReporters = new Map(); // "room|target" -> Set(reporterId)  (otomatik çıkarma için)
 
 const EJECT_THRESHOLD = parseInt(process.env.REPORT_EJECT_THRESHOLD || "2", 10);
@@ -29,7 +31,11 @@ export function report({ reporterId, targetId, roomName, reason }) {
   if (reports.length > 2000) reports.shift();
   if (roomName) {
     const key = `${roomName}|${targetId}`;
-    if (!roomReporters.has(key)) roomReporters.set(key, new Set());
+    if (!roomReporters.has(key)) {
+      roomReporters.set(key, new Set());
+      // En eskiyi at (Map ekleme sırasını korur) — oda kapansa da kayıt kalıyordu
+      while (roomReporters.size > REPORT_CAP) roomReporters.delete(roomReporters.keys().next().value);
+    }
     roomReporters.get(key).add(reporterId);
   }
   const s = supa();

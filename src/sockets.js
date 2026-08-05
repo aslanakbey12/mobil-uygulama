@@ -24,3 +24,12 @@ export function online(userId) {
 export function count() {
   return sockets.size;
 }
+
+// Bağlı HERKESE gönder. Kapanış sırasında kullanılır: istemci sunucunun
+// yenilendiğini bilir ve "bağlantı koptu" hatası göstermek yerine yeniden bağlanır.
+export function broadcastAll(obj) {
+  const msg = JSON.stringify(obj);
+  for (const ws of sockets.values()) {
+    if (ws && ws.readyState === 1) { try { ws.send(msg); } catch (e) {} }
+  }
+}
