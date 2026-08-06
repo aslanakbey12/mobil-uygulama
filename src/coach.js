@@ -15,6 +15,10 @@ import { supa } from "./supabase.js";
 
 export const coachConfigured = () => readingConfigured();
 
+// Koç için tercih edilen model. Ayarlanabilir bırakıldı: model isimleri değişiyor
+// ve kilitli bir isim, model emekliye ayrılınca koçu sessizce bozardı.
+const COACH_MODEL = process.env.COACH_MODEL || "gemini-pro-latest";
+
 // Haftanın anahtarı (pazartesi). Aynı hafta içinde tekrar istenirse kayıtlı
 // rapor döner — hem maliyet hem tutarlılık için (rapor hafta boyunca değişmemeli,
 // yoksa kullanıcı her açtığında farklı bir "plan" görür ve güven kaybeder).
@@ -184,40 +188,68 @@ export async function coachReply({ profile, plan, history, first }) {
     ? `CURRENT PLAN: goal="${plan.goal}" deadline="${plan.deadline}" focus="${plan.focus}"\nSteps: ${(plan.steps || []).map((s) => `${s.kind}${s.done ? "(done)" : ""}`).join(", ")}`
     : "CURRENT PLAN: none yet.";
 
-  const prompt = `You are the learner's personal English coach inside a vocabulary app.
-You know this learner's real data. Speak TURKISH. Be warm but BRIEF.
+  // Mesaj sayısı → seansın hangi aşamasında olduğumuz.
+  // Kullanıcı geri bildirimi: "girdim, ilk mesajdan beni bir yere yönlendiriyor,
+  // saçma." Haklıydı — eski istem "3-5 mesajda yönlendir" diyordu ve model bunu
+  // "hemen yönlendir" diye uyguluyordu. Gerçek bir koç önce ANLAR, sonra yönlendirir.
+  const tur = (Array.isArray(history) ? history : []).filter((m) => m.mine).length;
+  const asama = tur === 0 ? "TANIŞMA" : tur < 3 ? "ANLAMA" : tur < 5 ? "TEŞHİS" : "PLAN";
 
+  const prompt = `You are this learner's personal English coach. Speak TURKISH, address them as "sen".
+This is a COACHING SESSION, not a chatbot. A real coach listens first, understands the
+person, reflects back what they see, and only then proposes a plan — together.
+
+WHAT YOU KNOW ABOUT THEM (real data from the app):
 ${pf}
 
 ${mevcutPlan}
 
-YOUR JOB — this is not small talk:
-${first
-    ? "This is your FIRST conversation. Greet warmly, and find out WHY they are learning English and what their goal is (exam? work? travel?). You may take a few more messages here — this matters."
-    : "Get to the point within 3-5 messages, then direct them to a concrete action."}
-- Reference their REAL data (weak words, skill gap) — that is what makes you their coach.
-- End almost every message with either a question OR actions.
-- Never suggest more than 3 actions at once.
+SESSION STAGE: ${asama}
+${asama === "TANIŞMA" ? `Open the session. Introduce yourself briefly as their coach. Say ONE concrete
+thing you already see in their data (a real number or a real weak word) so they feel known.
+Then ask ONE open question about what they want from English.
+DO NOT suggest any action yet. DO NOT return any actions. This is hello.`
+  : asama === "ANLAMA" ? `Keep listening. Ask about their goal, deadline, where they use English,
+what they find hardest. React to what they actually said — do not change the subject.
+Still NO actions. You are building understanding.`
+  : asama === "TEŞHİS" ? `Now reflect: tell them what you see in their data and connect it to what
+they told you. Be specific ("kelimeleri tanıyorsun ama kuramıyorsun" style). Ask whether
+this matches how they feel. You may offer AT MOST 1 action if it fits naturally.`
+  : `Now propose a plan TOGETHER. Summarise the goal in their own words, suggest 2-3 concrete
+steps and ask for confirmation. Offer the actions that match those steps.`}
 
-AVAILABLE ACTIONS (you may ONLY use these kinds):
+HOW TO SPEAK:
+- Warm, direct, human. Never robotic, never a bulleted lecture.
+- 2-4 sentences. Ask ONE question at a time — a coach does not interrogate.
+- Reference their REAL data; that is what makes you their coach and not a chatbot.
+- Never repeat a question they already answered.
+
+AVAILABLE ACTIONS (you may ONLY use these kinds, and ONLY when the stage allows):
 ${Object.entries(ACTIONS).map(([k, v]) => `  ${k} — ${v}`).join("\n")}
 
 Conversation so far:
-${konusma || "(none yet)"}
+${konusma || "(none yet — you speak first)"}
 
 Return ONLY JSON:
 {
-  "reply": "your message in Turkish, max 45 words",
+  "reply": "your message in Turkish, 2-4 sentences",
   "actions": [ { "kind": "one of the kinds above", "label": "Turkish button text, max 5 words", "ref": "optional sub-choice like 'interview' or 'articles'" } ],
   "plan": null or { "goal": "...", "deadline": "...", "focus": "...", "steps": [ { "kind": "...", "ref": "...", "label": "..." } ] }
 }
-Set "plan" ONLY when you have enough information to commit to one (usually after the goal is clear). Otherwise null.`;
+Return "actions": [] unless the stage above allows them.
+Set "plan" ONLY at the PLAN stage, and only once the goal is genuinely clear. Otherwise null.`;
 
+  // KOÇTA KALİTE > HIZ.
+  // Diğer yerlerde flash kullanıyoruz çünkü hız önemli (sohbet ritmi, görsel
+  // arama). Koç ise ürünün ödeme zemini: kullanıcının "bu beni anlıyor"
+  // demesi buna bağlı. O yüzden güçlü modeli TERCİH ediyoruz — zincir hâlâ
+  // devrede, model cevap veremezse flash'a düşer ve sohbet ölmez.
+  // thinkingConfig YOK: pro modelleri thinkingBudget:0'ı reddediyor (bkz. bodyFor).
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.7, maxOutputTokens: 450, thinkingConfig: { thinkingBudget: 0 } },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.75, maxOutputTokens: 600 },
   };
-  const txt = await geminiText(body, { timeout: 18000, tries: 2 });
+  const txt = await geminiText(body, { timeout: 28000, tries: 2, prefer: COACH_MODEL });
   const parsed = JSON.parse(extractJson(txt));
   return {
     reply: String(parsed.reply || "").slice(0, 400),

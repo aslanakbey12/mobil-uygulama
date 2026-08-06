@@ -170,11 +170,16 @@ const SAFETY = [
   { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
 ];
 
-export async function geminiText(body, { timeout = 30000, tries = 3 } = {}) {
+// `prefer`: bu çağrı için ÖNCELİKLİ model. Koç sohbeti gibi kalitenin hıza
+// baskın geldiği yerlerde daha güçlü bir model istenebilir. Zincir yine devrede:
+// tercih edilen model 503/400 verirse normal yedeklere düşülür, yani kalite
+// isteği asla "hiç cevap gelmemesi"ne dönüşmez.
+export async function geminiText(body, { timeout = 30000, tries = 3, prefer = null } = {}) {
   let lastErr = "";
   // Güvenlik ayarlarını her isteğe ekle (istem enjeksiyonuna karşı da katman).
   body = { safetySettings: SAFETY, ...body };
-  for (const model of modelChain()) {
+  const zincir = prefer ? [prefer, ...modelChain().filter((m) => m !== prefer)] : modelChain();
+  for (const model of zincir) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
     const mbody = bodyFor(model, body);
     for (let attempt = 0; attempt < tries; attempt++) {
