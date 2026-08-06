@@ -138,11 +138,22 @@ function modelChain() {
   return [lastGoodModel, ...chain.filter((m) => m !== lastGoodModel)];   // çalışan model önce
 }
 
+// Test için dışa aktarım (model uyumluluğu sessizce daralmasın).
+export { bodyFor as __bodyForTest };
+
 // Teşhis/izleme için (sağlık ucunda gösterilebilir).
 export function activeModel() { return lastGoodModel; }
-// Pro modelleri thinkingBudget:0'ı reddeder (400) — o modelde bu alanı kaldır.
+// Bazı modeller `thinkingConfig`i reddeder ve 400 döner — o modellerde alanı kaldır.
+//
+// Önce yalnızca "pro" için yapılıyordu. Koç sohbetinde zincirin ÜÇ modelinde de
+// 400 alındı ve hata `gemini-flash-lite-latest`ten geldi; "lite" modeller de
+// düşünme bütçesi almıyor. Belirti aynı olduğu için kapsamı genişlettik.
+//
+// NOT: bu bir ÖNLEM. Asıl teşhis, aşağıda artık okunan hata mesajından gelecek —
+// eskiden "HTTP 400 (model)" dışında hiçbir bilgi tutmuyorduk ve bu, 400'ün
+// sebebini (geçersiz alan mı, anahtar mı, model mi) ayırt etmeyi imkânsız kılıyordu.
 function bodyFor(model, body) {
-  if (/pro/i.test(model) && body?.generationConfig?.thinkingConfig) {
+  if (/pro|lite/i.test(model) && body?.generationConfig?.thinkingConfig) {
     const gc = { ...body.generationConfig };
     delete gc.thinkingConfig;
     return { ...body, generationConfig: gc };
@@ -171,7 +182,18 @@ export async function geminiText(body, { timeout = 30000, tries = 3 } = {}) {
         const r = await postGemini(url, mbody, timeout);
         if (!r.ok) {
           if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < tries - 1) { await sleep(1800 * (attempt + 1)); continue; }
-          lastErr = `HTTP ${r.status} (${model})`;
+          // HATANIN SEBEBİNİ OKU. Eskiden yalnızca "HTTP 400 (model)" yazıyorduk ve
+          // Gemini'nin gövdede verdiği asıl açıklamayı atıyorduk. Bir 400 hatasını
+          // teşhis etmek imkânsız hale geliyordu: geçersiz alan mı, geçersiz anahtar
+          // mı, desteklenmeyen model mi — hepsi aynı görünüyordu. Artık sebebi
+          // taşıyoruz ve loglara da yazıyoruz.
+          let neden = "";
+          try {
+            const g = await r.json();
+            neden = String(g?.error?.message || "").slice(0, 300);
+          } catch (_) { /* gövde JSON değilse sessiz geç */ }
+          lastErr = `HTTP ${r.status} (${model})${neden ? ": " + neden : ""}`;
+          console.warn("gemini hatası:", lastErr);
           break; // bu model olmadı → sonraki modele geç
         }
         const cand0 = (await r.json())?.candidates?.[0];
