@@ -64,7 +64,12 @@ export async function weeklyReport({ profile, stats }) {
     `words that slipped back: ${Number(s.lapsedThisWeek) || 0}`,
     `study days this week: ${Number(s.activeDays) || 0}/7`,
     `text coverage: ~${Number(s.coverage) || 0}%`,
-  ].join("\n");
+    // PLAN İLERLEMESİ — döngüyü kapatan bilgi. Rapor, koçun verdiği planın ne
+    // kadarının yapıldığını görmezse "geçen hafta konuştuklarımız ne oldu"
+    // sorusu cevapsız kalır ve plan ciddiyetini kaybeder.
+    s.planGoal ? `their goal: "${String(s.planGoal).slice(0, 80)}"` : "no goal set yet",
+    s.planTotal ? `plan steps completed: ${Number(s.planDone) || 0}/${Number(s.planTotal)}` : "",
+  ].filter(Boolean).join("\n");
 
   const prompt = `You are a warm, direct English coach for a Turkish learner.
 Write their WEEKLY REPORT. Be specific and honest — never generic praise.
@@ -83,7 +88,10 @@ Write in TURKISH. Return ONLY JSON:
   "plan": ["3 concrete actions for next week, each max 10 words, imperative"]
 }
 Rules: no empty encouragement. If the numbers are weak, say so gently but clearly.
-Reference their actual weak words or skill gap when relevant. Speak to them as "sen".`;
+Reference their actual weak words or skill gap when relevant. Speak to them as "sen".
+If they have a goal and a plan, ALWAYS mention how far they got with it — that is
+the whole point of having a coach. If they did none of the plan, say it kindly
+but do not pretend it did not happen.`;
 
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
