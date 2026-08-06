@@ -30,6 +30,7 @@ import { mintToken, livekitConfigured } from "./token.js";
 import { getUserId, authConfigured, verifyToken, tokenFromReq } from "./auth.js";
 import { supaConfigured, supa } from "./supabase.js";
 import { isPremium, setPremium, isAgeConfirmed } from "./entitlements.js";
+import * as coach from "./coach.js";
 
 // Sosyal odaların yaş kapısı reddi. Tek metin: dört uçta da aynı şeyi söylemeli.
 const AGE_ERR = "Sosyal odalar 16 yaş ve üzeri içindir. Kelime çalışma bölümlerini kullanmaya devam edebilirsin.";
@@ -481,6 +482,30 @@ app.post("/word/image", async (req, reply) => {
   }
 });
 
+// HAFTALIK KOÇ RAPORU.
+//
+// ÜCRETSİZ KULLANICIYA DA AÇIK — bilinçli. Ödeme kararı, ürünün kullanıcıyı
+// anladığına inanmasından geçiyor; o inancı kuran şey bu rapor. Ücretli tarafa
+// saklasaydık, kimse görmeden karar vermek zorunda kalırdı.
+// Maliyeti de küçük: haftada tek çağrı, önbellekli (aynı hafta tekrar üretilmez).
+app.post("/coach/weekly", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!coach.coachConfigured()) return reply.code(503).send({ error: "Koç raporu yakında." });
+  if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
+  const { profile, stats } = req.body || {};
+  try {
+    const out = await coach.getOrCreateReport(userId, { profile, stats });
+    // Kota SADECE gerçekten üretim yapıldıysa harcanır. Önbellekten dönen rapor
+    // hiçbir YZ çağrısı yapmıyor; onu da saymak kullanıcıyı kendi raporuna
+    // bakmaktan caydırırdı.
+    if (!out.cached) aiquota.bumpAi(userId);
+    return out;
+  } catch (e) {
+    return reply.code(502).send({ error: String(e.message || e) });
+  }
+});
+
 // Haftalık lig: kullanıcının haftalık XP'sini bildir, pod sıralamasını al
 app.post("/league/sync", async (req, reply) => {
   const userId = getUserId(req);
@@ -651,12 +676,18 @@ app.post("/rooms/ai", async (req, reply) => {
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük AI hakkın doldu, yarın tekrar dene." });
   aiquota.bumpAi(userId);
-  const { level, name, words } = req.body || {};
+  const { level, name, words, mode, scenario, topic } = req.body || {};
   const focusWords = Array.isArray(words) ? [...new Set(words.filter(Boolean).map(String))].slice(0, 4) : [];
+  // MOD/SENARYO/KONU İSTEMCİDEN GELİR AMA DOĞRUDAN İSTEME GİRMEZ.
+  // chat_ai.js bunları BİLİNEN id listesiyle eşleştirir; eşleşmeyen değer sessizce
+  // varsayılana düşer. İstemciden gelen serbest metnin YZ istemine sızması, istem
+  // enjeksiyonunun en klasik yoludur — kapıyı burada kapatıyoruz.
+  const ctx = chatAI.resolveMode({ mode, scenario, topic });
   const botName = AI_BOT_NAMES[Math.floor(Math.random() * AI_BOT_NAMES.length)];
   const room = createAiRoom({ user: { userId, name: name || "Sen" }, level: level || "B1", focusWords, botName });
+  room.aiCtx = ctx;   // sonraki cevaplar da aynı modda kalsın
   let opener = "";
-  try { opener = await chatAI.generateOpener(focusWords, level || "B1", botName); }
+  try { opener = await chatAI.generateOpener(focusWords, level || "B1", botName, ctx); }
   catch (_) { opener = chatAI.fallbackOpener(focusWords, botName); }
   room.aiHistory = opener ? [{ mine: false, text: opener }] : [];
   return {

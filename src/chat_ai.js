@@ -5,11 +5,67 @@ import { geminiText, readingConfigured, extractJson } from "./reading.js";
 
 export const chatConfigured = () => readingConfigured();
 
+// ── YZ MODLARI ───────────────────────────────────────────────────────────────
+// Kullanıcı geri bildirimi: "sohbet öğretici gelmiyor". Sebebi kısmen aşağıdaki
+// REPLY RULES'daydı (modele açıkça "no lecturing" diyorduk), kısmen de tek bir
+// jenerik moddan ibaret olmasıydı. Artık mod, YZ'nin NE İŞ yaptığını belirliyor.
+//
+// GÜVENLİK: id → sabit metin eşlemesi. İstemciden gelen değer doğrudan isteme
+// GİRMEZ, yalnızca bu tablodaki anahtarlarla eşleşir; eşleşmezse varsayılana
+// düşer. Serbest metnin isteme sızması istem enjeksiyonunun klasik yoludur.
+const SCENARIOS = {
+  interview:  "a job interview. You are the interviewer. Ask about their experience, strengths, and why they want the role.",
+  meeting:    "a work meeting. You are a colleague. Discuss a plan, ask their opinion, and politely disagree once.",
+  shopping:   "a shop. You are the shop assistant. Help them find an item, discuss size/price, handle a return.",
+  restaurant: "a restaurant. You are the waiter. Take their order, suggest dishes, handle a small problem.",
+  airport:    "an airport check-in desk. You are the agent. Handle luggage, seat choice, and a delay question.",
+  doctor:     "a doctor's office. You are the doctor. Ask about symptoms, duration, and give simple advice.",
+  hotel:      "a hotel reception. You are the receptionist. Handle check-in, a room problem, and late checkout.",
+  smalltalk:  "a casual first meeting. You are a friendly stranger making small talk.",
+};
+
+const GRAMMAR = {
+  articles:     "articles (a/an/the). Turkish has no articles, so learners drop them.",
+  perfect:      "the present perfect (have/has + past participle) vs past simple, and since/for/already/yet.",
+  phrasal:      "common phrasal verbs (give up, look after, put off). Turkish has no equivalent structure.",
+  prepositions: "prepositions of time and place (in/on/at), which do not map cleanly to Turkish suffixes.",
+  tenses:       "past simple vs past continuous — when to use each.",
+  conditionals: "conditional sentences (if-clauses): real, likely and hypothetical.",
+};
+
+// İstemciden gelen ham değerleri GÜVENLİ bir bağlam nesnesine çevirir.
+export function resolveMode({ mode, scenario, topic } = {}) {
+  if (mode === "scenario" && SCENARIOS[scenario]) {
+    return { mode: "scenario", id: scenario, setting: SCENARIOS[scenario] };
+  }
+  if (mode === "grammar" && GRAMMAR[topic]) {
+    return { mode: "grammar", id: topic, focus: GRAMMAR[topic] };
+  }
+  return { mode: "coach", id: "coach" };   // varsayılan: mevcut kelime koçu
+}
+
+// Moda göre YZ'ye rolünü anlatan talimat.
+export function modeBrief(ctx) {
+  if (!ctx) return "";
+  if (ctx.mode === "scenario") {
+    return `ROLEPLAY: You are role-playing ${ctx.setting}
+Stay in role. Keep it realistic but simple. If the learner gets stuck, help them with a hint.`;
+  }
+  if (ctx.mode === "grammar") {
+    return `GRAMMAR COACH: Today's focus is ${ctx.focus}
+Explain briefly with ONE clear example, then ask the learner to produce a sentence using it.
+When they make a mistake in THIS structure, correct it explicitly and kindly — this is a lesson, not just chat.`;
+  }
+  return "";
+}
+
 // Sohbet açılışı: hedef kelimelerle doğal, kısa bir selam + ilk soru.
-export async function generateOpener(words, level, botName) {
+export async function generateOpener(words, level, botName, ctx = null) {
   const lvl = ["A1", "A2", "B1", "B2", "C1", "C2"].includes(level) ? level : "B1";
   const ws = (words || []).slice(0, 4).join(", ");
+  const brief = modeBrief(ctx);
   const prompt = `You are "${botName}", a friendly English conversation partner for a Turkish learner at CEFR level ${lvl}.
+${brief}
 Start a natural, warm 1-on-1 chat about a topic that naturally involves these words: ${ws || "everyday life"}.
 Write ONE short opening message (max 30 words) at ${lvl} level: a friendly greeting + a topic + ONE simple question to get them talking. Sound like a real person, casual and encouraging. Plain text only, no quotes.`;
   const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, maxOutputTokens: 120, thinkingConfig: { thinkingBudget: 0 } } };

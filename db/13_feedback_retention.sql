@@ -54,5 +54,12 @@ begin
   -- süredir yoksa sonsuza kadar tutulmamalı. (Aktif engeller etkilenmez —
   -- created_at yenilenmediği için eski kayıtlar zaten ölü ilişkilerdir.)
   delete from public.blocks where created_at < now() - interval '730 days';
+
+  -- Haftalık koç raporları: 2 yıl. Bunlar ilerleme geçmişi olduğu için uzun
+  -- tutulur ("2 yıl önce üretimde %54'tün" demek değerli), ama sınırsız değil.
+  -- Tablo yoksa hata vermesin diye koşullu (db/15_coach_reports.sql).
+  if to_regclass('public.coach_reports') is not null then
+    delete from public.coach_reports where created_at < now() - interval '730 days';
+  end if;
 end;
 $$;
