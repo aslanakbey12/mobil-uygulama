@@ -7,7 +7,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-const { weekKey } = await import("../src/coach.js");
+const { weekKey, ACTIONS } = await import("../src/coach.js");
 
 describe("hafta anahtarı", () => {
   test("haftanın HER GÜNÜ aynı pazartesiyi verir", () => {
@@ -38,5 +38,30 @@ describe("hafta anahtarı", () => {
 
   test("YYYY-MM-DD biçiminde döner (veritabanı date sütunu)", () => {
     assert.match(weekKey(new Date("2026-08-05T12:00:00Z")), /^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+// ── Koç eylemleri: modelin ürettiği metin NAVİGASYONA dönüşüyor ─────────────
+// Bu, güvenlik açısından en hassas nokta. Model "kind" alanına ne yazarsa
+// istemci ona göre bir ekrana gidiyor. Doğrulanmazsa model uydurduğu bir
+// hedefe yönlendirebilir ya da beklenmedik bir yere düşürebilir.
+// resolveMode'daki beyaz liste mantığının aynısı.
+describe("koç eylemleri", () => {
+  test("bilinen eylem türleri katalogda", () => {
+    for (const k of ["swipe", "practice", "reading", "scenario", "grammar", "wordchat", "friends", "social"]) {
+      assert.ok(ACTIONS[k], `${k} katalogda yok`);
+    }
+  });
+
+  test("katalog SADECE uygulamada karşılığı olan yerleri içerir", () => {
+    // Yeni bir tür eklemek isteyen, istemcide de karşılığını açmak zorunda.
+    // Bu test o sözleşmeyi hatırlatır.
+    assert.equal(Object.keys(ACTIONS).length, 8);
+  });
+
+  test("eylem açıklamaları BOŞ olamaz — model neyi seçtiğini bilmeli", () => {
+    for (const [k, v] of Object.entries(ACTIONS)) {
+      assert.ok(typeof v === "string" && v.length > 10, `${k} açıklaması yetersiz`);
+    }
   });
 });

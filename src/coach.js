@@ -101,6 +101,123 @@ Reference their actual weak words or skill gap when relevant. Speak to them as "
   };
 }
 
+// ── KOÇ SOHBETİ ─────────────────────────────────────────────────────────────
+//
+// Koç bir sohbet arkadaşı DEĞİL. Amacı muhabbet değil, kullanıcıyı 3-5 mesajda
+// DOĞRU İŞE yönlendirmek. Serbest sohbet olsaydı beğenmediğimiz şeye dönerdi:
+// hoş vakit, sıfır sonuç.
+//
+// Yönlendirme "şuraya git" demekle olmuyor — öyle diyen her sistem kullanıcıyı
+// kaybeder. Koçun cevabı EYLEM taşıyor: istemci bunları buton olarak çiziyor,
+// kullanıcı basınca iş sohbetin içinden başlıyor.
+//
+// EYLEMLER YZ MODLARIYLA SINIRLI DEĞİL. Koç tüm uygulamanın yönlendiricisi:
+// "kelime kaydır", "arkadaş edin" de diyebilmeli. Kullanıcının ihtiyacı bazen
+// bir YZ özelliği değil, zaten var olan bir bölüm.
+//
+// GÜVENLİK: model bu listeden BAŞKA bir eylem uyduramaz. resolveMode'daki
+// beyaz liste mantığının aynısı — modelin ürettiği metin navigasyona
+// dönüşüyorsa, o metin doğrulanmadan kullanılamaz.
+export const ACTIONS = {
+  swipe:    "Kelimeler bölümünde yeni kelime keşfet",
+  practice: "Alıştırma turu yap (SRS tekrarları)",
+  reading:  "Seviyene uygun bir okuma parçası oku",
+  scenario: "Senaryo provası yap (mülakat, market, doktor…)",
+  grammar:  "Gramer konusu çalış (a/the, present perfect, phrasal verb…)",
+  wordchat: "Kelime Koçu ile takıldığın kelimeler üzerine sohbet et",
+  friends:  "Arkadaş ekle (birlikte pratik için)",
+  social:   "Gerçek biriyle pratik yap (yazılı/sesli oda, oyun)",
+};
+
+// Modelin döndürdüğü eylemleri temizle. Bilinmeyen tür → düşer.
+function sanitizeActions(arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const a of arr.slice(0, 3)) {
+    const kind = String(a?.kind || "");
+    if (!ACTIONS[kind]) continue;                     // beyaz liste
+    out.push({
+      kind,
+      label: String(a?.label || "").slice(0, 60) || kind,
+      ref: String(a?.ref || "").slice(0, 40) || null, // senaryo/gramer alt seçimi
+    });
+  }
+  return out;
+}
+
+// Modelin önerdiği plan güncellemesini temizle. Serbest metin alanları KIRPILIR;
+// adımların türü yine beyaz listeden geçer.
+function sanitizePlan(p) {
+  if (!p || typeof p !== "object") return null;
+  const adimlar = (Array.isArray(p.steps) ? p.steps : [])
+    .filter((s) => ACTIONS[String(s?.kind || "")])
+    .slice(0, 5)
+    .map((s) => ({
+      kind: String(s.kind),
+      ref: String(s.ref || "").slice(0, 40) || null,
+      label: String(s.label || "").slice(0, 80),
+      done: false,
+    }));
+  if (!adimlar.length) return null;
+  return {
+    goal: String(p.goal || "").slice(0, 80),
+    deadline: String(p.deadline || "").slice(0, 20),
+    focus: String(p.focus || "").slice(0, 20),
+    steps: adimlar,
+  };
+}
+
+export async function coachReply({ profile, plan, history, first }) {
+  const pf = String(profile || "").slice(0, 900);
+  const konusma = (Array.isArray(history) ? history : []).slice(-10)
+    .map((m) => `${m.mine ? "Learner" : "Coach"}: ${String(m.text || "").slice(0, 300)}`)
+    .join("\n");
+  const mevcutPlan = plan
+    ? `CURRENT PLAN: goal="${plan.goal}" deadline="${plan.deadline}" focus="${plan.focus}"\nSteps: ${(plan.steps || []).map((s) => `${s.kind}${s.done ? "(done)" : ""}`).join(", ")}`
+    : "CURRENT PLAN: none yet.";
+
+  const prompt = `You are the learner's personal English coach inside a vocabulary app.
+You know this learner's real data. Speak TURKISH. Be warm but BRIEF.
+
+${pf}
+
+${mevcutPlan}
+
+YOUR JOB — this is not small talk:
+${first
+    ? "This is your FIRST conversation. Greet warmly, and find out WHY they are learning English and what their goal is (exam? work? travel?). You may take a few more messages here — this matters."
+    : "Get to the point within 3-5 messages, then direct them to a concrete action."}
+- Reference their REAL data (weak words, skill gap) — that is what makes you their coach.
+- End almost every message with either a question OR actions.
+- Never suggest more than 3 actions at once.
+
+AVAILABLE ACTIONS (you may ONLY use these kinds):
+${Object.entries(ACTIONS).map(([k, v]) => `  ${k} — ${v}`).join("\n")}
+
+Conversation so far:
+${konusma || "(none yet)"}
+
+Return ONLY JSON:
+{
+  "reply": "your message in Turkish, max 45 words",
+  "actions": [ { "kind": "one of the kinds above", "label": "Turkish button text, max 5 words", "ref": "optional sub-choice like 'interview' or 'articles'" } ],
+  "plan": null or { "goal": "...", "deadline": "...", "focus": "...", "steps": [ { "kind": "...", "ref": "...", "label": "..." } ] }
+}
+Set "plan" ONLY when you have enough information to commit to one (usually after the goal is clear). Otherwise null.`;
+
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0.7, maxOutputTokens: 450, thinkingConfig: { thinkingBudget: 0 } },
+  };
+  const txt = await geminiText(body, { timeout: 18000, tries: 2 });
+  const parsed = JSON.parse(extractJson(txt));
+  return {
+    reply: String(parsed.reply || "").slice(0, 400),
+    actions: sanitizeActions(parsed.actions),
+    plan: sanitizePlan(parsed.plan),
+  };
+}
+
 // Uçtan uca: kayıtlı varsa onu ver, yoksa üret + kaydet.
 export async function getOrCreateReport(userId, { profile, stats }) {
   const wk = weekKey();

@@ -506,6 +506,24 @@ app.post("/coach/weekly", async (req, reply) => {
   }
 });
 
+// KOÇ SOHBETİ — kısa, hedef odaklı, EYLEMLE biten.
+// Serbest sohbet değil: koç 3-5 mesajda kullanıcıyı somut bir işe yönlendirir.
+// Cevap eylem butonları taşır; iş sohbetin içinden başlar.
+app.post("/coach/chat", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!coach.coachConfigured()) return reply.code(503).send({ error: "Koç yakında." });
+  if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
+  if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük YZ hakkın doldu, yarın tekrar dene." });
+  aiquota.bumpAi(userId);
+  const { profile, plan, history, first } = req.body || {};
+  try {
+    return await coach.coachReply({ profile, plan, history, first: !!first });
+  } catch (e) {
+    return reply.code(502).send({ error: String(e.message || e) });
+  }
+});
+
 // Haftalık lig: kullanıcının haftalık XP'sini bildir, pod sıralamasını al
 app.post("/league/sync", async (req, reply) => {
   const userId = getUserId(req);
