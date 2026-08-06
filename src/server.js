@@ -1174,8 +1174,22 @@ app.listen({ port: PORT, host: "0.0.0.0" })
     try { await aiquota.loadQuotas(); } catch (_) {}
     aiquota.startQuotaPersistence();
     // VERİ SAKLAMA: eski kayıtları temizle (db/13_feedback_retention.sql).
-    // Açılışta bir kez + günde bir. Fonksiyon yoksa sessizce geçilir.
-    const purge = () => { const db = supa(); if (db) db.rpc("purge_old_data").then(() => {}, () => {}); };
+    // Açılışta bir kez + günde bir.
+    //
+    // SONUÇ LOGLANIR. Eskiden hem başarı hem hata yutuluyordu (.then(()=>{}, ()=>{}))
+    // ve bu sessiz bir yalan riski taşıyordu: migration uygulanmadıysa temizlik hiç
+    // çalışmaz, ama gizlilik politikamız §6'da "rapor kayıtlarını sınırlı süre
+    // saklarız" diye TAAHHÜT ediyoruz. Yerine getirilmeyen bir taahhüdü fark
+    // edemiyorsak, taahhüt yok demektir.
+    const purge = () => {
+      const db = supa();
+      if (!db) return;
+      db.rpc("purge_old_data").then(
+        () => app.log.info("veri saklama temizliği çalıştı"),
+        (e) => app.log.error({ err: String(e?.message || e) },
+          "veri saklama temizliği BAŞARISIZ — db/13_feedback_retention.sql uygulandı mı?")
+      );
+    };
     purge();
     const purgeTimer = setInterval(purge, 24 * 60 * 60 * 1000);
     if (purgeTimer.unref) purgeTimer.unref();
