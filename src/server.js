@@ -444,17 +444,36 @@ app.post("/word/image", async (req, reply) => {
   if (!en) return reply.code(400).send({ error: "kelime gerekli" });
   const word = String(en).slice(0, 40);
   try {
-    // AI'ya bir kez sor: fotoğraflanabilir mi + doğru arama terimi ne?
-    // (Önbellekli; AI yoksa/hata verirse eski davranışa — ham kelimeyle arama — düşülür.)
-    let q = null;
-    if (reading.readingConfigured()) {
+    // ── 1) KALICI ÖNBELLEK: YALNIZCA "fotoğraflanabilir mi" kararı için ──
+    // Bellek içi önbellek her yeniden başlamada siliniyor; Render ücretsiz
+    // katmanda süreç sık uyuduğu için pratikte çoğu istek soğuk düşüyordu.
+    // Buradan bir okuma ~50 ms; alternatifi Gemini çağrısı (1-3 sn).
+    //
+    // Fotoğraf listesini BURADAN DÖNDÜRMÜYORUZ: kayıtlı liste HAM (sıralanmamış)
+    // ve sıralama kullanıcı oylarına göre her okumada yeniden yapılmalı. O iş
+    // fetchWordImage'in içinde, rankPhotos'un yanında duruyor.
+    const kayitli = await images.loadWordImage(word);
+    if (kayitli && !kayitli.depictable) return { image: { photos: [], depictable: false } };
+
+    // ── 2) AI'ya sor: fotoğraflanabilir mi + doğru arama terimi ne? ──
+    // (AI yoksa/hata verirse eski davranışa — ham kelimeyle arama — düşülür.)
+    let q = kayitli?.query || null;
+    if (!q && reading.readingConfigured()) {
       try {
         const iq = await reading.imageQueryFor(word, tr, definition);
         // Soyut/işlev kelimesi → alakasız foto göstermektense HİÇ gösterme.
-        if (!iq.depictable) return { image: { photos: [], depictable: false } };
+        // Bu kararı da SAKLIYORUZ: asıl tekrar maliyeti buradaydı — soyut
+        // kelimeler için Pexels'e hiç gidilmiyor ama Gemini'ye her uyanışta
+        // yeniden soruluyordu.
+        if (!iq.depictable) {
+          images.saveWordImage(word, { depictable: false, query: null, photos: [] }).catch(() => {});
+          return { image: { photos: [], depictable: false } };
+        }
         q = iq.query;
       } catch (_) { /* AI erişilemedi → ham kelimeyle devam */ }
     }
+
+    // ── 3) Pexels ── (fetchWordImage kalıcı önbelleği kendi okur/yazar)
     const image = await images.fetchWordImage(word, q);
     return { image: { ...image, depictable: true } };
   } catch (e) {
