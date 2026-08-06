@@ -135,8 +135,7 @@ export const ACTIONS = {
   practice: "Alıştırma turu yap (SRS tekrarları)",
   reading:  "Seviyene uygun bir okuma parçası oku",
   scenario: "Senaryo provası yap (mülakat, market, doktor…)",
-  grammar:  "Gramer konusu çalış (a/the, present perfect, phrasal verb…)",
-  wordchat: "Kelime Koçu ile takıldığın kelimeler üzerine sohbet et",
+  grammar:  "Gramer dersi al: kural + örnekler + puanlanan alıştırma",
   friends:  "Arkadaş ekle (birlikte pratik için)",
   social:   "Gerçek biriyle pratik yap (yazılı/sesli oda, oyun)",
 };

@@ -48,15 +48,17 @@ describe("hafta anahtarı", () => {
 // resolveMode'daki beyaz liste mantığının aynısı.
 describe("koç eylemleri", () => {
   test("bilinen eylem türleri katalogda", () => {
-    for (const k of ["swipe", "practice", "reading", "scenario", "grammar", "wordchat", "friends", "social"]) {
+    for (const k of ["swipe", "practice", "reading", "scenario", "grammar", "friends", "social"]) {
       assert.ok(ACTIONS[k], `${k} katalogda yok`);
     }
   });
 
   test("katalog SADECE uygulamada karşılığı olan yerleri içerir", () => {
-    // Yeni bir tür eklemek isteyen, istemcide de karşılığını açmak zorunda.
-    // Bu test o sözleşmeyi hatırlatır.
-    assert.equal(Object.keys(ACTIONS).length, 8);
+    // Tür EKLEYEN istemcide karşılığını açmak, tür KALDIRAN istemciden de
+    // silmek zorunda. Bu test o sözleşmeyi iki yönde de hatırlatır.
+    // 7 (wordchat kaldırıldı: o mod sohbetten ibaretti, hem koçla hem
+    // senaryoyla örtüşüyordu; kaldırılınca bu test uyardı — istenen davranış).
+    assert.equal(Object.keys(ACTIONS).length, 7);
   });
 
   test("eylem açıklamaları BOŞ olamaz — model neyi seçtiğini bilmeli", () => {
