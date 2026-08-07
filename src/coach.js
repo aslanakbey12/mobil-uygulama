@@ -114,7 +114,7 @@ but do not pretend it did not happen.`;
 
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.6, maxOutputTokens: 500, thinkingConfig: { thinkingBudget: 0 } },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.6, maxOutputTokens: 1200, thinkingConfig: { thinkingBudget: 0 } },
   };
   const txt = await geminiText(body, { timeout: 20000, tries: 2 });
   const parsed = parseJson(txt);
@@ -408,7 +408,7 @@ Set "plan" ONLY at the PLAN stage, and only once the goal is genuinely clear. Ot
   // thinkingConfig YOK: pro modelleri thinkingBudget:0'ı reddediyor (bkz. bodyFor).
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.75, maxOutputTokens: 2000 },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.75, maxOutputTokens: 3200 },
   };
   const txt = await geminiText(body, { timeout: 28000, tries: 2, prefer: COACH_MODEL });
   const parsed = parseJson(txt);

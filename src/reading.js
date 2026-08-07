@@ -187,22 +187,33 @@ export function __postGeminiTest(model, body, ms = 60000) {
 
 // Teşhis/izleme için (sağlık ucunda gösterilebilir).
 export function activeModel() { return lastGoodModel; }
-// Bazı modeller `thinkingConfig`i reddeder ve 400 döner — o modellerde alanı kaldır.
+// DÜŞÜNMEYİ KAPATMA — model adına göre değil, DESTEKLENEN alana çevirerek.
 //
-// Önce yalnızca "pro" için yapılıyordu. Koç sohbetinde zincirin ÜÇ modelinde de
-// 400 alındı ve hata `gemini-flash-lite-latest`ten geldi; "lite" modeller de
-// düşünme bütçesi almıyor. Belirti aynı olduğu için kapsamı genişlettik.
+// Eski hali model adında "pro|lite" arayıp `thinkingConfig`i tamamen SİLİYORDU.
+// Bu kalıp iki kez yama ile genişletildi ve yine yetmedi: `gemini-flash-latest`
+// (artık Gemini 3.5 Flash) desene uymadığı için `thinkingBudget: 0` ile gidiyor
+// ve 400 alıyordu. Yani her okuma parçası isteği önce boşa bir tur atıp yedeğe
+// düşüyordu — sessizce, çünkü yedek çalışıyordu.
 //
-// NOT: bu bir ÖNLEM. Asıl teşhis, aşağıda artık okunan hata mesajından gelecek —
-// eskiden "HTTP 400 (model)" dışında hiçbir bilgi tutmuyorduk ve bu, 400'ün
-// sebebini (geçersiz alan mı, anahtar mı, model mi) ayırt etmeyi imkânsız kılıyordu.
+// Anahtarla ÖLÇTÜK (2026-08-07):
+//
+//   model                     thinkingBudget:0   thinkingLevel:"low"   config yok
+//   gemini-flash-latest       400 RED            OK, düşünme 0         OK, düşünme 1660
+//   gemini-flash-lite-latest  OK, düşünme 0      OK, düşünme 0         OK, düşünme 0
+//   gemini-pro-latest         OK                 OK                    —
+//
+// İki sonuç: (1) `thinkingLevel: "low"` ÜÇ modelde de çalışıyor; (2) alanı silmek
+// en kötü seçenek — flash o zaman 1660 düşünme token'ı yakıyor ve düşünme çıktı
+// olarak faturalanıyor. Yani eski "sil" davranışı hem 400 üretiyor hem de
+// başarılı olduğu yerde para yakıyordu.
+//
+// Artık model adı saymıyoruz: çağıran "düşünme istemiyorum" (thinkingBudget: 0)
+// dediğinde bunu her modelin kabul ettiği biçime çeviriyoruz. Yeni bir model
+// zincire girdiğinde bu kod sessizce bozulmaz.
 function bodyFor(model, body) {
-  if (/pro|lite/i.test(model) && body?.generationConfig?.thinkingConfig) {
-    const gc = { ...body.generationConfig };
-    delete gc.thinkingConfig;
-    return { ...body, generationConfig: gc };
-  }
-  return body;
+  const gc = body?.generationConfig;
+  if (gc?.thinkingConfig?.thinkingBudget !== 0) return body;
+  return { ...body, generationConfig: { ...gc, thinkingConfig: { thinkingLevel: "low" } } };
 }
 // Gemini'yi model-yedekli + retry ile çağır, ham metni döndür. 503'te önce aynı modelde
 // birkaç kez, sonra yedek modelde dener → parça asla "high demand" yüzünden boş kalmaz.
