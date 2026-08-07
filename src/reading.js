@@ -204,6 +204,19 @@ export async function geminiText(body, { timeout = 30000, tries = 3, prefer = nu
         const cand0 = (await r.json())?.candidates?.[0];
         const txt = (cand0?.content?.parts || []).map((p) => p?.text || "").join("").trim();
         if (!txt) { lastErr = `boş yanıt ${cand0?.finishReason || ""} (${model})`; if (attempt < tries - 1) { await sleep(1200); continue; } break; }
+        // KESİK ÇIKTIYI BAŞARI SAYMA. finishReason'a yalnızca metin BOŞKEN
+        // bakıyorduk; model 40 karakter üretip bütçesi dolunca (MAX_TOKENS) metin
+        // boş olmadığı için sağlam sanılıp geri dönüyordu ve çağıran taraf
+        // "Unterminated string in JSON" ile patlıyordu — sebebi anlatmayan bir hata.
+        // JSON istediğimizde yarım çıktı ZATEN kullanılamaz: bunu başarısızlık say,
+        // zincirdeki sonraki model denensin. Modellerin düşünme davranışı farklı
+        // olduğu için bu gerçek bir kurtarma yolu. (Serbest metinde yarım cevap yine
+        // de işe yarayabilir; bu yüzden yalnızca JSON kipinde uygulanıyor.)
+        if (cand0?.finishReason === "MAX_TOKENS" && mbody?.generationConfig?.responseMimeType === "application/json") {
+          lastErr = `çıktı bütçesi doldu, JSON yarım kaldı (${model})`;
+          console.warn("gemini kesik çıktı:", lastErr);
+          break;                 // aynı bütçeyle tekrar denemek aynı sonucu verir → sonraki model
+        }
         lastGoodModel = model;   // bu model çalıştı → sonraki isteklerde önce bunu dene
         return txt;
       } catch (e) {

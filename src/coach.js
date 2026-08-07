@@ -10,10 +10,25 @@
 // kullanıcı başına ayda birkaç kuruş. Algılanan değeri ise en yüksek olan şey.
 // Bu yüzden ücretsiz kullanıcıya da veriyoruz: güveni kuran şey bu, ve güven
 // olmadan ödeme olmuyor.
-import { geminiText, readingConfigured, extractJson } from "./reading.js";
+import { geminiText, readingConfigured, extractJson, repairJson } from "./reading.js";
 import { supa } from "./supabase.js";
 
 export const coachConfigured = () => readingConfigured();
+
+// GÜVENLİ AYRIŞTIRMA. Model çıktısı bütçe dolunca CÜMLE ORTASINDA kesilebilir
+// ve JSON.parse "Unterminated string" ile patlar (gerçek olay). Okuma tarafında
+// bunun için yazılmış repairJson zaten vardı ama koç yollarında kullanılmıyordu:
+// yarım kalan son öğe atılır, gerisi kurtarılır.
+export function parseJson(txt) {
+  const clean = extractJson(txt);
+  try { return JSON.parse(clean); } catch (_) { /* onarmayı dene */ }
+  try { return repairJson(clean); } catch (_) { /* o da olmadı */ }
+  // Onarım da başaramadıysa (kesilme ilk alanın ortasındaysa kurtarılacak tam
+  // öğe yoktur) kullanıcıya ayrıştırıcının teknik metnini GÖSTERME. "Unterminated
+  // string in JSON at position 40" bir son kullanıcı için hiçbir şey ifade etmiyor
+  // ve ne yapacağını da söylemiyor.
+  throw new Error("Koç şu an cevap üretemedi, tekrar dener misin?");
+}
 
 // Koç için tercih edilen model. Ayarlanabilir bırakıldı: model isimleri değişiyor
 // ve kilitli bir isim, model emekliye ayrılınca koçu sessizce bozardı.
@@ -102,7 +117,7 @@ but do not pretend it did not happen.`;
     generationConfig: { responseMimeType: "application/json", temperature: 0.6, maxOutputTokens: 500, thinkingConfig: { thinkingBudget: 0 } },
   };
   const txt = await geminiText(body, { timeout: 20000, tries: 2 });
-  const parsed = JSON.parse(extractJson(txt));
+  const parsed = parseJson(txt);
   // Modelden gelen yapıyı DOĞRULA: eksik alan arayüzü boş bırakır, uzun metin
   // tasarımı bozar. Modele güvenip doğrudan göstermek, kontrolü ona vermek olur.
   return {
@@ -259,10 +274,10 @@ Return ONLY JSON:
 
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 350 },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 1500 },
   };
   const txt = await geminiText(body, { timeout: 20000, tries: 1, prefer: COACH_MODEL });
-  const p = JSON.parse(extractJson(txt));
+  const p = parseJson(txt);
   const obs = (Array.isArray(p.observations) ? p.observations : [])
     .map((o) => String(o).slice(0, 90)).filter(Boolean).slice(0, 6);
   if (!obs.length) return null;
@@ -393,10 +408,10 @@ Set "plan" ONLY at the PLAN stage, and only once the goal is genuinely clear. Ot
   // thinkingConfig YOK: pro modelleri thinkingBudget:0'ı reddediyor (bkz. bodyFor).
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.75, maxOutputTokens: 600 },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.75, maxOutputTokens: 2000 },
   };
   const txt = await geminiText(body, { timeout: 28000, tries: 2, prefer: COACH_MODEL });
-  const parsed = JSON.parse(extractJson(txt));
+  const parsed = parseJson(txt);
   return {
     reply: String(parsed.reply || "").slice(0, 400),
     actions: sanitizeActions(parsed.actions),
