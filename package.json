@@ -9,6 +9,7 @@
     "dev": "node --watch src/server.js",
     "check": "node --check src/server.js && node --check src/aiquota.js && node --check src/ratelimit.js && node --check src/reading.js && node --check src/chat_ai.js && node --check src/images.js && node --check src/moderation.js",
     "test": "node --experimental-test-module-mocks --test test/*.test.js",
+    "eval": "node eval/run.mjs",
     "audit": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
