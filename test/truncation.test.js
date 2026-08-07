@@ -14,6 +14,13 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
+// reading.js anahtarı YÜKLENİRKEN okuyor ve anahtar yoksa model zinciri tek
+// öğeye düşüyor — yani yedek modele geçişi hiç test edemezdik. İlk sürümde bu
+// yüzden "anahtar yoksa atla" demiştim, ama commit kapısında anahtar OLMADIĞI
+// için testler orada sessizce atlanıyordu: koruması olmayan bir koruma.
+// İçe aktarmadan ÖNCE sahte anahtar kur — ağa çıkılmıyor, fetch zaten taklit.
+process.env.GEMINI_API_KEY = process.env.GEMINI_API_KEY || "test-anahtari";
+
 const { parseJson } = await import("../src/coach.js");
 
 describe("kesik JSON ayrıştırma", () => {
@@ -67,8 +74,7 @@ describe("geminiText kesik çıktıyı başarı saymaz", () => {
     } finally { globalThis.fetch = orj; }
   }
 
-  test("JSON kipinde MAX_TOKENS → kesik metin DÖNMEZ, sonraki model denenir", async (t) => {
-    if (!process.env.GEMINI_API_KEY) return t.skip("GEMINI_API_KEY yok — zincir kurulmuyor");
+  test("JSON kipinde MAX_TOKENS → kesik metin DÖNMEZ, sonraki model denenir", async () => {
     const cfg = { responseMimeType: "application/json", maxOutputTokens: 600 };
     // 1. model kesik verir, 2. model sağlam verir.
     const { sonuc } = await calistir(
@@ -78,8 +84,7 @@ describe("geminiText kesik çıktıyı başarı saymaz", () => {
     assert.equal(sonuc, '{"reply":"tamam"}', "kesik çıktı geri dönmemeli, yedek modelin sağlam cevabı dönmeli");
   });
 
-  test("serbest metinde MAX_TOKENS → yarım cevap yine de işe yarar, dokunulmaz", async (t) => {
-    if (!process.env.GEMINI_API_KEY) return t.skip("GEMINI_API_KEY yok — zincir kurulmuyor");
+  test("serbest metinde MAX_TOKENS → yarım cevap yine de işe yarar, dokunulmaz", async () => {
     const { sonuc } = await calistir([yanit("Uzun bir cevabın yarısı", "MAX_TOKENS")], { maxOutputTokens: 600 });
     assert.equal(sonuc, "Uzun bir cevabın yarısı");
   });
