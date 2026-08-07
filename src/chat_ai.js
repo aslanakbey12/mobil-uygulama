@@ -1,7 +1,7 @@
 // AI konuşma partneri (AÇIK — kullanıcı AI ile eşleştiğini bilir). Öğrencinin
 // çalıştığı kelimeler üzerine, seviyesine uygun, teşvik edici sohbet eder ve
 // öğrenciyi konuşturmak için sorular sorar. Gemini (reading.js model-yedekli).
-import { geminiText, readingConfigured, extractJson } from "./reading.js";
+import { geminiText, readingConfigured, extractJson, UTIL_MODEL } from "./reading.js";
 
 export const chatConfigured = () => readingConfigured();
 
@@ -68,8 +68,8 @@ export async function generateOpener(words, level, botName, ctx = null) {
 ${brief}
 Start a natural, warm 1-on-1 chat about a topic that naturally involves these words: ${ws || "everyday life"}.
 Write ONE short opening message (max 30 words) at ${lvl} level: a friendly greeting + a topic + ONE simple question to get them talking. Sound like a real person, casual and encouraging. Plain text only, no quotes.`;
-  const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, maxOutputTokens: 120, thinkingConfig: { thinkingBudget: 0 } } };
-  const txt = (await geminiText(body, { timeout: 10000, tries: 1 })).trim().replace(/^["'“”]+|["'“”]+$/g, "");
+  const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, maxOutputTokens: 1200, thinkingConfig: { thinkingBudget: 0 } } };
+  const txt = (await geminiText(body, { timeout: 10000, tries: 1, prefer: UTIL_MODEL })).trim().replace(/^["'“”]+|["'“”]+$/g, "");
   return txt.slice(0, 300);
 }
 
@@ -116,8 +116,8 @@ Analyze ONLY the Learner's messages. Return ONLY valid JSON:
 Rules: corrections max 3 and ONLY real mistakes (empty array if none); notes very short; be kind, never condescending.
 Conversation:
 ${convo}`;
-  const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 600, thinkingConfig: { thinkingBudget: 0 } } };
-  const txt = await geminiText(body, { timeout: 25000, tries: 2 });
+  const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 1500, thinkingConfig: { thinkingBudget: 0 } } };
+  const txt = await geminiText(body, { timeout: 25000, tries: 2, prefer: UTIL_MODEL });
   const parsed = JSON.parse(extractJson(txt));
   return {
     used: Array.isArray(parsed.used) ? parsed.used.map(String).slice(0, 6) : [],
@@ -176,13 +176,13 @@ ${convo}
 Return ONLY JSON: {"reply": string, "suggestions": [string, string, string]}`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.9, maxOutputTokens: 220, thinkingConfig: { thinkingBudget: 0 } },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.9, maxOutputTokens: 1200, thinkingConfig: { thinkingBudget: 0 } },
   };
   // Yapışkan model zaten çalışanı öne alıyor. Ama TEK deneme + 9 sn, model bir anlık
   // yavaşladığında sohbeti komple düşürüyordu (gerçek kullanıcı: "yazıyor çıktı,
   // mesaj gelmedi"). 2 deneme + 12 sn: hâlâ hızlı başarısızlık, ama tek bir
   // gecikme yüzünden sohbet kopmuyor. Yine de olmazsa çağıran taraf yedeğe düşer.
-  const txt = await geminiText(body, { timeout: 12000, tries: 2 });
+  const txt = await geminiText(body, { timeout: 12000, tries: 2, prefer: UTIL_MODEL });
   let parsed; try { parsed = JSON.parse(extractJson(txt)); } catch (_) { parsed = { reply: txt }; }
   const reply = String(parsed.reply || "").trim().replace(/^["'“”]+|["'“”]+$/g, "").slice(0, 400);
   const suggestions = (Array.isArray(parsed.suggestions) ? parsed.suggestions : [])

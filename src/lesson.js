@@ -61,7 +61,7 @@ Return ONLY JSON:
 
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.5, maxOutputTokens: 1400, thinkingConfig: { thinkingBudget: 0 } },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.5, maxOutputTokens: 2200, thinkingConfig: { thinkingBudget: 0 } },
   };
   const txt = await geminiText(body, { timeout: 30000, tries: 2 });
   const p = JSON.parse(extractJson(txt));

@@ -8,6 +8,13 @@ const KEY = process.env.GEMINI_API_KEY || "";
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 // Okuma parçası için ayrı model (boş = genel zincir). bkz. generatePassage.
 const READING_MODEL = process.env.READING_MODEL || "";
+// KISA YARDIMCI ÇAĞRILAR için ayrı model (ipucu, örnek cümle, çeviri, görsel
+// sorgusu, sohbet açılış/cevap). Ölçtük: flash bu çağrılarda 116-192 DÜŞÜNME
+// token'ı harcıyor ve 120-250'lik bütçelerde cevaba yer kalmıyordu — hafıza
+// ipucu kullanıcıya '", \"Ak k"' gibi bir kırıntı dönüyordu. flash-lite aynı
+// işlerde HİÇ düşünmüyor, doğru çıktı veriyor ve çıktıda 3,6 kat ucuz.
+// Bunlar zaten basit işler; pahalı modelin katkısı yok, zararı vardı.
+export const UTIL_MODEL = process.env.UTIL_MODEL || "gemini-flash-lite-latest";
 // Günlük okuma üretimi tavanı — KADEMEYE DUYARLI.
 //
 // Eskiden tek sayıydı (20) ve premium'a bakmıyordu. İki ayrı sorun yaratıyordu:
@@ -359,9 +366,9 @@ export async function generateMnemonic(en, tr) {
   const prompt = `Türk öğrenci için İngilizce "${en}" (Türkçe anlamı: ${tr}) kelimesini akılda tutmaya yardımcı, KISA (tek cümle, en fazla 20 kelime) yaratıcı bir hafıza kancası yaz. Kelimenin okunuşunu ya da görüntüsünü Türkçe bir çağrışımla anlamına bağla. SADECE Türkçe ipucu cümlesini yaz; tırnak, başlık veya açıklama ekleme.`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.9, maxOutputTokens: 200, thinkingConfig: { thinkingBudget: 0 } },
+    generationConfig: { temperature: 0.9, maxOutputTokens: 1000, thinkingConfig: { thinkingBudget: 0 } },
   };
-  let txt = (await geminiText(body, { timeout: 20000, tries: 2 })).replace(/^["'“”]+|["'“”]+$/g, "").slice(0, 300);
+  let txt = (await geminiText(body, { timeout: 20000, tries: 2, prefer: UTIL_MODEL })).replace(/^["'“”]+|["'“”]+$/g, "").slice(0, 300);
   if (!txt) throw new Error("AI boş yanıt döndü.");
   if (mnemoCache.size >= 3000) mnemoCache.delete(mnemoCache.keys().next().value);
   mnemoCache.set(key, txt);
@@ -390,9 +397,9 @@ Görev: Tanımın ve cümlenin DOĞAL Türkçe karşılığını yaz. Kısa ve a
 SADECE JSON döndür: {"definitionTr": string, "exampleTr": string}`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.3, maxOutputTokens: 250, thinkingConfig: { thinkingBudget: 0 } },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.3, maxOutputTokens: 1000, thinkingConfig: { thinkingBudget: 0 } },
   };
-  const txt = await geminiText(body, { timeout: 20000, tries: 2 });
+  const txt = await geminiText(body, { timeout: 20000, tries: 2, prefer: UTIL_MODEL });
   let parsed; try { parsed = JSON.parse(extractJson(txt)); } catch (e) { throw new Error("AI yanıtı çözümlenemedi."); }
   const out = {
     definitionTr: String(parsed.definitionTr || "").slice(0, 240).trim(),
@@ -421,9 +428,9 @@ export async function imageQueryFor(en, tr, definition) {
 Return ONLY JSON: {"depictable": boolean, "query": string}`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 120, thinkingConfig: { thinkingBudget: 0 } },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 800, thinkingConfig: { thinkingBudget: 0 } },
   };
-  const txt = await geminiText(body, { timeout: 18000, tries: 2 });
+  const txt = await geminiText(body, { timeout: 18000, tries: 2, prefer: UTIL_MODEL });
   let parsed; try { parsed = JSON.parse(extractJson(txt)); } catch (e) { throw new Error("AI yanıtı çözümlenemedi."); }
   const out = {
     depictable: !!parsed.depictable,
@@ -448,9 +455,9 @@ Also give a Turkish translation of the sentence.
 Return ONLY JSON: {"en": string, "tr": string}`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.8, maxOutputTokens: 200, thinkingConfig: { thinkingBudget: 0 } },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.8, maxOutputTokens: 1000, thinkingConfig: { thinkingBudget: 0 } },
   };
-  const txt = await geminiText(body, { timeout: 20000, tries: 2 });
+  const txt = await geminiText(body, { timeout: 20000, tries: 2, prefer: UTIL_MODEL });
   let parsed; try { parsed = JSON.parse(extractJson(txt)); } catch (e) { throw new Error("AI yanıtı çözümlenemedi."); }
   const out = { en: String(parsed.en || "").slice(0, 200).trim(), tr: String(parsed.tr || "").slice(0, 200).trim() };
   if (!out.en) throw new Error("Örnek cümle üretilemedi.");

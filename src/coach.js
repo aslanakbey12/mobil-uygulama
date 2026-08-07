@@ -33,6 +33,8 @@ export function parseJson(txt) {
 // Koç için tercih edilen model. Ayarlanabilir bırakıldı: model isimleri değişiyor
 // ve kilitli bir isim, model emekliye ayrılınca koçu sessizce bozardı.
 const COACH_MODEL = process.env.COACH_MODEL || "gemini-pro-latest";
+// Haftalık rapor için ayrı model — koçun yapışkan modeline düşmesin (bkz. weeklyReport).
+const REPORT_MODEL = process.env.REPORT_MODEL || "gemini-flash-lite-latest";
 
 // Haftanın anahtarı (pazartesi). Aynı hafta içinde tekrar istenirse kayıtlı
 // rapor döner — hem maliyet hem tutarlılık için (rapor hafta boyunca değişmemeli,
@@ -114,9 +116,14 @@ but do not pretend it did not happen.`;
 
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.6, maxOutputTokens: 1200, thinkingConfig: { thinkingBudget: 0 } },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.6, maxOutputTokens: 2500, thinkingConfig: { thinkingBudget: 0 } },
   };
-  const txt = await geminiText(body, { timeout: 20000, tries: 2 });
+  // MODELİ SABİTLE. Rapor `prefer` kullanmıyordu, yani zincirin YAPIŞKAN modeline
+  // düşüyordu: koç sohbeti pro'yu ısıttığı anda haftalık rapor da pro'da çalışıyor
+  // ve 1024 düşünme token'ı harcıyordu (lite'ta aynı iş 0). Rapor kısa ve yapısal
+  // bir özet; pahalı modelin katkısı yok. Ücretsiz kullanıcıya da verdiğimiz için
+  // hacmi yüksek — sabitlemek gerekiyor.
+  const txt = await geminiText(body, { timeout: 20000, tries: 2, prefer: REPORT_MODEL });
   const parsed = parseJson(txt);
   // Modelden gelen yapıyı DOĞRULA: eksik alan arayüzü boş bırakır, uzun metin
   // tasarımı bozar. Modele güvenip doğrudan göstermek, kontrolü ona vermek olur.
@@ -274,7 +281,7 @@ Return ONLY JSON:
 
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 1500 },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 1500, thinkingConfig: { thinkingBudget: 0 } },
   };
   const txt = await geminiText(body, { timeout: 20000, tries: 1, prefer: COACH_MODEL });
   const p = parseJson(txt);
@@ -408,7 +415,7 @@ Set "plan" ONLY at the PLAN stage, and only once the goal is genuinely clear. Ot
   // thinkingConfig YOK: pro modelleri thinkingBudget:0'ı reddediyor (bkz. bodyFor).
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.75, maxOutputTokens: 3200 },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.75, maxOutputTokens: 3200, thinkingConfig: { thinkingBudget: 0 } },
   };
   const txt = await geminiText(body, { timeout: 28000, tries: 2, prefer: COACH_MODEL });
   const parsed = parseJson(txt);
