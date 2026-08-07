@@ -62,6 +62,12 @@ begin
     delete from public.coach_reports where created_at < now() - interval '730 days';
   end if;
 
+  -- Okuma önbelleği: 180 gündür hiç okunmamış parçalar (db/18_reading_cache.sql).
+  -- Bilerek agresif DEĞİL: silinen her parça bir daha PARA ÖDENEREK üretilir.
+  if to_regclass('public.reading_cache') is not null then
+    delete from public.reading_cache where last_hit_at < now() - interval '180 days';
+  end if;
+
   -- Koç sohbetleri: 1 yıl dokunulmamışsa sil. Sohbet içeriği kullanıcının en
   -- mahrem verisi; ilerleme geçmişi kadar uzun tutmaya gerek yok.
   if to_regclass('public.coach_chats') is not null then
