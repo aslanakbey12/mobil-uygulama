@@ -68,6 +68,7 @@ export const CASES = [
     bekle: {
       // GERÇEK HATA: koç her oturumda kendini yeniden tanıtıyordu.
       kendiniTanitma: true,
+      beceriAdiDogru: true,
       tekSoru: true,
     },
   },
@@ -91,7 +92,7 @@ export const CASES = [
         ["Toplantıda anlamıyorum, okuyunca anlıyorum", null],
       ]),
     },
-    bekle: { asama: "TEŞHİS", enFazlaEylem: 1, planYok: true, veriyeAtif: true, tekSoru: true },
+    bekle: { asama: "TEŞHİS", enFazlaEylem: 1, planYok: true, veriyeAtif: true, beceriAdiDogru: true, tekSoru: true },
   },
   {
     id: "plan",
@@ -120,6 +121,8 @@ export const CASES = [
     },
     bekle: {
       notlariAynenSoyleme: true,   // istem: "NEVER quote them back — that would be creepy"
+      taahhutIste: true,           // notlar "tarih vermekten kaçınıyor" diyor → koç tarih istemeli
+      planaDeginsin: true,         // planı var ve 8 gündür yok
       tekSoru: true,
     },
   },
@@ -161,6 +164,6 @@ export const CASES = [
         ["yok bakamadım", null],
       ]),
     },
-    bekle: { tekSoru: true, notlariAynenSoyleme: true },
+    bekle: { tekSoru: true, notlariAynenSoyleme: true, planaDeginsin: true },
   },
 ];

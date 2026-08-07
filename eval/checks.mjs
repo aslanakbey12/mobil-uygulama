@@ -119,5 +119,81 @@ export function denetle(vaka, cevap) {
     ekle("eylemlerin etiketi var", hepsiEtiketli);
   }
 
+  // ── OKUYARAK BULUNAN KUSURLAR ─────────────────────────────────────────────
+  // Aşağıdaki dördü, modelleri karşılaştırırken cevapları GÖZLE okuyunca çıktı.
+  // Hepsi yukarıdaki denetimlerden geçmişti; yani sayı "69/69" derken koçluk
+  // kalitesi belirgin biçimde düşüktü. Ölçüm aleti kördü.
+
+  // 1) BECERİYİ YANLIŞ ADLA SÖYLEME.
+  // Gerçek olay: profilde "eşleştirme %82" yazarken model "yazılımda ise %82'sin"
+  // dedi. Sayı profilde olduğu için "gerçek veriye atıf" denetimi geçti, ama cümle
+  // yanlıştı — kullanıcının MESLEĞİNİ (yazılımcı) beceri adı sanmıştı. Kullanıcıya
+  // kendi verisini yanlış söylemek, koça duyulan güveni en hızlı yıkan şey.
+  if (b.beceriAdiDogru) {
+    const pf = String(vaka.girdi.profile || "");
+    const harita = [...pf.matchAll(/(eşleştirme|dinleme|yazım|okuma|üretim|telaffuz)\s*%(\d+)/gi)]
+      .map((m) => ({ ad: m[1].toLowerCase(), pct: m[2] }));
+    const KOK = ["eşleş", "dinle", "yazım", "yazma", "okuma", "üretim", "telaffuz"];
+    let ihlal = null;
+    for (const m of reply.matchAll(/%(\d+)/g)) {
+      const pct = m[1];
+      const bilinen = harita.find((h) => h.pct === pct);
+      if (!bilinen) continue;                       // profilde olmayan sayı: başka denetimin işi
+      const pencere = reply.slice(Math.max(0, m.index - 32), m.index).toLowerCase();
+      if (KOK.some((k) => pencere.includes(k))) {
+        // Bir beceri adı var — doğrusu mu?
+        if (!pencere.includes(bilinen.ad.slice(0, 5))) ihlal = `%${pct} yanlış beceriye bağlanmış`;
+      // TÜRKÇE HARF SINIFI. JavaScript'in \w sınıfı ı, ş, ğ, ö, ü, ç harflerini
+      // TANIMIYOR — "yazılımda" kelimesi \w{4,} ile eşleşmiyordu ve denetim
+      // sessizce hiçbir şey yakalamıyordu. Türkçe metin denetlerken \w kullanmak
+      // çalışıyor gibi görünüp hiçbir şey yapmamanın en kolay yolu.
+      } else if (/[a-zçğıöşü]{4,}(da|de|ta|te)\s*(ise\s*)?$/i.test(pencere)) {
+        // Beceri adı yok ama "…da/de ise" gibi bir atıf kalıbı var → uydurma bağ.
+        ihlal = `%${pct} beceri olmayan bir şeye bağlanmış: "${pencere.trim().slice(-24)}"`;
+      }
+      if (ihlal) break;
+    }
+    ekle("beceri adı doğru", !ihlal, ihlal || "");
+  }
+
+  // 2) NOTLARDAKİ DAVRANIŞI KULLANMA.
+  // Notlar "tarih vermekten kaçınıyor" ve "meydan okumaya iyi tepki veriyor"
+  // diyorsa, mazeret karşısında koçun işi somut bir taahhüt istemektir. Notu
+  // saklamak yetmez, DAVRANIŞA dönüşmesi gerekir — yoksa notun hiçbir değeri yok.
+  if (b.taahhutIste) {
+    const kalip = /(ne zaman|hangi gün|saat kaç|kaçta|tarih|yarın|bu akşam|bugün|hafta içi|hangi güne|söz ver|planlayalım)/i;
+    const m = reply.match(kalip);
+    ekle("somut taahhüt istiyor", !!m, m ? m[0] : "mazereti kabullenip geçmiş");
+  }
+
+  // 3) VAR OLAN PLANA DEĞİNME.
+  // Kullanıcı "adımlara bakamadım" derken koç plandan hiç söz etmeyip başka
+  // konuya atlarsa, plan ciddiyetini kaybeder. Koçu sohbet botundan ayıran tek
+  // kalıcı şey plandı; ona değinmemek o farkı silmek demek.
+  if (b.planaDeginsin) {
+    const p = vaka.girdi.plan;
+    const hedefKok = String(p?.goal || "").split(/\s+/)[0] || "";
+    const kalip = new RegExp(`(plan|adım|hedef${hedefKok ? "|" + hedefKok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : ""})`, "i");
+    const m = reply.match(kalip);
+    ekle("mevcut plana değiniyor", !!m, m ? m[0] : "plandan hiç söz etmemiş");
+  }
+
+  // 4) BAĞLAÇLA BİRLEŞTİRİLMİŞ ÇİFT SORU.
+  // "X'i VE ne zaman Y olacağını söyler misin?" — tek soru işareti, iki soru.
+  // `?` saymak bunu kaçırıyordu. İnsan bu tür bir soruda yalnızca kolay olanı
+  // cevaplar; koçun "tek soru" kuralının amacı da zaten buydu.
+  // ŞIKLI SORU İSTİSNA: "…mı, yoksa …mı?" tek bir seçim sorusudur, iyi bir koçluk
+  // aracıdır ve yasaklanmamalı.
+  if (b.tekSoru !== false) {
+    const soruCumlesi = String(reply).split(/(?<=[.!?…])\s+/).find((c) => c.includes("?")) || "";
+    if (soruCumlesi && !/yoksa/i.test(soruCumlesi)) {
+      // Soru eki Türkçede AYRI YAZILIR ("söyler misin"), yani "kelime+ek" kalıbı
+      // aramak yanlıştı ve hiçbir şey yakalamıyordu. Ek başlı başına bir kelime.
+      const isaret = (soruCumlesi.match(/(^|[^a-zçğıöşü])(ne zaman|hangi|nasıl|neden|kaç|nerede|ne kadar)([^a-zçğıöşü]|$)/gi) || []).length
+        + (soruCumlesi.match(/(^|\s)(mı|mi|mu|mü)(sın|sin|sun|sün|yım|yim|yız|yiz|dır|dir)?([^a-zçğıöşü]|$)/gi) || []).length;
+      ekle("tek soru (bağlaçlı çift soru dahil)", isaret <= 1, isaret > 1 ? `${isaret} soru öğesi` : "");
+    }
+  }
+
   return out;
 }

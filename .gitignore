@@ -6,3 +6,4 @@ npm-debug.log*
 .DS_Store
 
 eval/son.json
+eval/out/

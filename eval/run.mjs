@@ -137,7 +137,20 @@ for (const vaka of vakalar) {
   sonuc.push({ id: vaka.id, baslik: vaka.baslik, sure, hata, cevap, denetimler, gecen, toplam: denetimler.length });
 }
 
-const [pg, pc] = FIYAT[model] || [1.25, 10.0];
+// FİYATI SAĞLAYICIDAN AL. Elle tutulan tablo, karşılaştırmanın anlamını yok
+// ediyordu: OpenRouter model kimlikleri tabloda olmadığı için hepsine Gemini pro
+// fiyatı uygulanıp DeepSeek 10 kat pahalı görünüyordu. OpenRouter fiyatı zaten
+// API'sinde veriyor — tahmin etmek yerine soruyoruz.
+let fiyat = FIYAT[model];
+if (!fiyat && sag === "openrouter") {
+  try {
+    const r = await fetch("https://openrouter.ai/api/v1/models", { headers: { authorization: `Bearer ${process.env.LLM_API_KEY}` } });
+    const j = await r.json();
+    const m = (j.data || []).find((x) => x.id === model);
+    if (m?.pricing) fiyat = [Number(m.pricing.prompt) * 1e6, Number(m.pricing.completion) * 1e6];
+  } catch (_) { /* alınamazsa aşağıdaki uyarı devreye girer */ }
+}
+const [pg, pc] = fiyat || [1.25, 10.0];
 const tokGin = kullanim.reduce((t, k) => t + k.gin, 0);
 const tokCik = kullanim.reduce((t, k) => t + k.cik, 0);
 const usd = (tokGin * pg + tokCik * pc) / 1e6;
@@ -145,18 +158,26 @@ const ortSure = Math.round(sonuc.reduce((t, s) => t + s.sure, 0) / (sonuc.length
 console.log(`\nVAKA:    ${hatasizVaka}/${vakalar.length} tam temiz`);
 console.log(`DENETİM: ${gecenDenetim}/${toplamDenetim}  (%${((gecenDenetim / toplamDenetim) * 100).toFixed(0)})`);
 console.log(`TOKEN:   ${tokGin} girdi · ${tokCik} çıktı · ${kullanim.length} çağrı`);
-console.log(`MALİYET: ₺${(usd * 47.5).toFixed(3)}${FIYAT[model] ? "" : "  (fiyat bilinmiyor, Gemini pro varsayıldı)"}`);
+console.log(`MALİYET: ₺${(usd * 47.5).toFixed(3)}${fiyat ? "" : "  (fiyat alınamadı, Gemini pro varsayıldı)"}`);
 console.log(`GECİKME: ortalama ${ortSure}ms`);
 
-const hedef = path.join(BURA, "son.json");
-fs.writeFileSync(hedef, JSON.stringify({
+// HER MODELİN SONUCUNU AYRI SAKLA. Tek bir son.json'a yazmak, model
+// karşılaştırmasında üretilen METİNLERİ kaybettiriyordu — oysa asıl değerlendirme
+// orada: denetimler sözleşmeye uyumu ölçüyor, Türkçenin doğallığını ve tavsiyenin
+// isabetini ölçmüyor. Onu ancak okuyarak anlarız.
+const govde = JSON.stringify({
   tarih: new Date().toISOString(),
   saglayici: sag,
   model,
   ozet: { hatasizVaka, vakaSayisi: vakalar.length, gecenDenetim, toplamDenetim },
   sonuc,
-}, null, 1));
-console.log(`\nAyrıntı: eval/son.json`);
+}, null, 1);
+
+fs.mkdirSync(path.join(BURA, "out"), { recursive: true });
+const adSade = `${sag}__${model}`.replace(/[^a-z0-9._-]+/gi, "_");
+fs.writeFileSync(path.join(BURA, "out", `${adSade}.json`), govde);
+fs.writeFileSync(path.join(BURA, "son.json"), govde);
+console.log(`\nAyrıntı: eval/out/${adSade}.json`);
 
 // Çıkış kodu: CI'ya bağlanabilsin diye. Şimdilik bilgi amaçlı.
 // exitCode: process.exit() Windows'ta açık tanıtıcılarla libuv uyarısı veriyordu.
