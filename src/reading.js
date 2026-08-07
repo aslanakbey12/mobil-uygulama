@@ -1,4 +1,5 @@
 import { supa } from "./supabase.js";
+import { callModel, activeProvider } from "./llm.js";
 // Okuma parçası üretimi (Google Gemini). API anahtarı YALNIZCA sunucuda (GEMINI_API_KEY).
 // Kullanıcının öğrenme havuzundaki kelimelerden, seviyesine uygun kısa bir metin +
 // 3 anlama sorusu üretir. Kota tasarrufu için üretilenler önbelleğe alınır.
@@ -170,6 +171,10 @@ let lastProbeAt = 0;
 const PROBE_INTERVAL_MS = 10 * 60 * 1000;   // 10 dk'da bir tercih edilen modeli yeniden dene
 
 function modelChain() {
+  // BAŞKA SAĞLAYICIDAYSA zincir tek modele iner. Gemini model adlarını DeepSeek'e
+  // ya da OpenRouter'a sormanın anlamı yok: hepsi 404 döner, gerçek hatayı gizler
+  // ve ölçümü kirletir (tek işlem için üç çağrı görünür).
+  if (activeProvider() !== "gemini") return [MODEL];
   const chain = [...new Set([MODEL, "gemini-3-flash-preview", "gemini-flash-lite-latest"])];
   if (!lastGoodModel) return chain;
   const now = Date.now();
@@ -242,29 +247,24 @@ export async function geminiText(body, { timeout = 30000, tries = 3, prefer = nu
   body = { safetySettings: SAFETY, ...body };
   const zincir = prefer ? [prefer, ...modelChain().filter((m) => m !== prefer)] : modelChain();
   for (const model of zincir) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
+    // Gövde Gemini şeklinde kalıyor; sağlayıcı çevirisi llm.js içinde.
+    // Varsayılanda (LLM_PROVIDER ayarsız) davranış birebir eskisi gibi.
     const mbody = bodyFor(model, body);
     for (let attempt = 0; attempt < tries; attempt++) {
       try {
-        const r = await postGemini(url, mbody, timeout);
+        const r = await callModel(model, mbody, timeout);
         if (!r.ok) {
           if ((r.status === 503 || r.status === 429 || r.status === 500) && attempt < tries - 1) { await sleep(1800 * (attempt + 1)); continue; }
           // HATANIN SEBEBİNİ OKU. Eskiden yalnızca "HTTP 400 (model)" yazıyorduk ve
-          // Gemini'nin gövdede verdiği asıl açıklamayı atıyorduk. Bir 400 hatasını
+          // sağlayıcının gövdede verdiği asıl açıklamayı atıyorduk. Bir 400 hatasını
           // teşhis etmek imkânsız hale geliyordu: geçersiz alan mı, geçersiz anahtar
-          // mı, desteklenmeyen model mi — hepsi aynı görünüyordu. Artık sebebi
-          // taşıyoruz ve loglara da yazıyoruz.
-          let neden = "";
-          try {
-            const g = await r.json();
-            neden = String(g?.error?.message || "").slice(0, 300);
-          } catch (_) { /* gövde JSON değilse sessiz geç */ }
-          lastErr = `HTTP ${r.status} (${model})${neden ? ": " + neden : ""}`;
-          console.warn("gemini hatası:", lastErr);
+          // mı, desteklenmeyen model mi — hepsi aynı görünüyordu.
+          lastErr = `HTTP ${r.status} (${model})${r.error ? ": " + r.error : ""}`;
+          console.warn("model hatası:", lastErr);
           break; // bu model olmadı → sonraki modele geç
         }
-        const cand0 = (await r.json())?.candidates?.[0];
-        const txt = (cand0?.content?.parts || []).map((p) => p?.text || "").join("").trim();
+        const cand0 = { finishReason: r.finishReason };
+        const txt = r.text || "";
         if (!txt) { lastErr = `boş yanıt ${cand0?.finishReason || ""} (${model})`; if (attempt < tries - 1) { await sleep(1200); continue; } break; }
         // KESİK ÇIKTIYI BAŞARI SAYMA. finishReason'a yalnızca metin BOŞKEN
         // bakıyorduk; model 40 karakter üretip bütçesi dolunca (MAX_TOKENS) metin

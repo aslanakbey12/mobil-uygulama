@@ -36,26 +36,70 @@ delete process.env.SUPABASE_URL;
 delete process.env.SUPABASE_SERVICE_KEY;
 
 const args = process.argv.slice(2);
+
+// SAĞLAYICI HAZIR AYARLARI. Hepsi OpenAI uyumlu uç kullanıyor, o yüzden tek
+// uyarlayıcı (src/llm.js) yetiyor. Anahtar isimleri .env'den okunur.
+const SAGLAYICILAR = {
+  gemini:     { provider: "gemini", varsayilanModel: "gemini-pro-latest" },
+  deepseek:   { provider: "openai", base: "https://api.deepseek.com/v1",              anahtar: "DEEPSEEK_API_KEY",   varsayilanModel: "deepseek-v4-flash" },
+  openrouter: { provider: "openai", base: "https://openrouter.ai/api/v1",             anahtar: "OPENROUTER_API_KEY", varsayilanModel: "anthropic/claude-haiku-4.5" },
+  qwen:       { provider: "openai", base: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", anahtar: "QWEN_API_KEY", varsayilanModel: "qwen3.7-plus" },
+};
+
+const provArg = args.find((a) => a.startsWith("--provider="));
+const sag = provArg ? provArg.slice(11) : "gemini";
+const P = SAGLAYICILAR[sag];
+if (!P) { console.error(`Bilinmeyen sağlayıcı: ${sag}. Seçenekler: ${Object.keys(SAGLAYICILAR).join(", ")}`); process.exit(1); }
+if (P.provider !== "gemini") {
+  const k = process.env[P.anahtar];
+  if (!k) { console.error(`${P.anahtar} yok. server/.env içine ekle.`); process.exit(1); }
+  process.env.LLM_PROVIDER = "openai";
+  process.env.LLM_BASE_URL = P.base;
+  process.env.LLM_API_KEY = k;
+}
+
 const modelArg = args.find((a) => a.startsWith("--model="));
-if (modelArg) process.env.COACH_MODEL = modelArg.slice(8);
+const model = modelArg ? modelArg.slice(8) : P.varsayilanModel;
+process.env.COACH_MODEL = model;
+process.env.GEMINI_MODEL = model;   // zincir başka sağlayıcıda tek modele iniyor
 const secilen = args.filter((a) => !a.startsWith("--"));
 
 const { CASES } = await import("./cases.mjs");
 const { denetle } = await import("./checks.mjs");
 
-// Token/maliyet ölçümü — her koşuda ne harcadığımızı da bilelim.
+// Token/maliyet ölçümü. İKİ CEVAP ŞEKLİ de tanınmalı: Gemini usageMetadata,
+// OpenAI uyumlu usage. Sadece birini tanımak, karşılaştırmanın yarısını
+// "0 token" göstermek olurdu — yani tam da ölçmek istediğimiz şeyi kaybederdik.
 const kullanim = [];
 const gercekFetch = globalThis.fetch;
 globalThis.fetch = async (url, opt) => {
   const r = await gercekFetch(url, opt);
-  if (String(url).includes("generateContent")) {
+  const u_ = String(url);
+  if (u_.includes("generateContent") || u_.includes("/chat/completions")) {
     try {
       const j = await r.clone().json();
-      const u = j?.usageMetadata || {};
-      kullanim.push({ gin: u.promptTokenCount || 0, cik: (u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0) });
+      if (j?.usageMetadata) {
+        const u = j.usageMetadata;
+        kullanim.push({ gin: u.promptTokenCount || 0, cik: (u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0) });
+      } else if (j?.usage) {
+        kullanim.push({ gin: j.usage.prompt_tokens || 0, cik: j.usage.completion_tokens || 0 });
+      }
     } catch (_) { /* ölçüm başarısız olsa da koşu sürsün */ }
   }
   return r;
+};
+
+// $/1M (girdi, çıktı). Karar anında doğrulanmalı — sağlayıcılar fiyat değiştiriyor
+// (DeepSeek açıkça "yakında önemli zam" diyor). Burada sadece koşu maliyetini
+// göstermek için var.
+const FIYAT = {
+  "gemini-pro-latest": [1.25, 10.0],
+  "gemini-flash-latest": [1.50, 9.0],
+  "gemini-flash-lite-latest": [0.30, 2.50],
+  "deepseek-v4-flash": [0.14, 0.28],
+  "deepseek-v4-pro": [0.435, 0.87],
+  "anthropic/claude-haiku-4.5": [1.00, 5.0],
+  "qwen3.7-plus": [0.40, 1.20],
 };
 
 const { coachReply } = await import("../src/coach.js");
@@ -63,7 +107,7 @@ const { coachReply } = await import("../src/coach.js");
 const vakalar = secilen.length ? CASES.filter((c) => secilen.includes(c.id)) : CASES;
 if (!vakalar.length) { console.error("Eşleşen vaka yok. id'ler: " + CASES.map((c) => c.id).join(", ")); process.exit(1); }
 
-console.log(`Koç değerlendirmesi — ${vakalar.length} vaka · model=${process.env.COACH_MODEL || "gemini-pro-latest"}\n`);
+console.log(`Koç değerlendirmesi — ${vakalar.length} vaka · sağlayıcı=${sag} · model=${model}\n`);
 
 const sonuc = [];
 let toplamDenetim = 0, gecenDenetim = 0, hatasizVaka = 0;
@@ -90,19 +134,27 @@ for (const vaka of vakalar) {
   sonuc.push({ id: vaka.id, baslik: vaka.baslik, sure, hata, cevap, denetimler, gecen, toplam: denetimler.length });
 }
 
-const usd = kullanim.reduce((t, k) => t + (k.gin * 1.25 + k.cik * 10) / 1e6, 0);
+const [pg, pc] = FIYAT[model] || [1.25, 10.0];
+const tokGin = kullanim.reduce((t, k) => t + k.gin, 0);
+const tokCik = kullanim.reduce((t, k) => t + k.cik, 0);
+const usd = (tokGin * pg + tokCik * pc) / 1e6;
+const ortSure = Math.round(sonuc.reduce((t, s) => t + s.sure, 0) / (sonuc.length || 1));
 console.log(`\nVAKA:    ${hatasizVaka}/${vakalar.length} tam temiz`);
 console.log(`DENETİM: ${gecenDenetim}/${toplamDenetim}  (%${((gecenDenetim / toplamDenetim) * 100).toFixed(0)})`);
-console.log(`MALİYET: ${kullanim.length} çağrı · ₺${(usd * 47.5).toFixed(2)}`);
+console.log(`TOKEN:   ${tokGin} girdi · ${tokCik} çıktı · ${kullanim.length} çağrı`);
+console.log(`MALİYET: ₺${(usd * 47.5).toFixed(3)}${FIYAT[model] ? "" : "  (fiyat bilinmiyor, Gemini pro varsayıldı)"}`);
+console.log(`GECİKME: ortalama ${ortSure}ms`);
 
 const hedef = path.join(BURA, "son.json");
 fs.writeFileSync(hedef, JSON.stringify({
   tarih: new Date().toISOString(),
-  model: process.env.COACH_MODEL || "gemini-pro-latest",
+  saglayici: sag,
+  model,
   ozet: { hatasizVaka, vakaSayisi: vakalar.length, gecenDenetim, toplamDenetim },
   sonuc,
 }, null, 1));
 console.log(`\nAyrıntı: eval/son.json`);
 
 // Çıkış kodu: CI'ya bağlanabilsin diye. Şimdilik bilgi amaçlı.
-process.exit(gecenDenetim === toplamDenetim ? 0 : 1);
+// exitCode: process.exit() Windows'ta açık tanıtıcılarla libuv uyarısı veriyordu.
+process.exitCode = gecenDenetim === toplamDenetim ? 0 : 1;
