@@ -342,6 +342,13 @@ export async function coachReply({ profile, plan, history, first, gapDays = null
     ? [
         "YOUR PRIVATE NOTES ABOUT THIS PERSON (from earlier sessions).",
         "Use them to shape how you talk to them. NEVER quote them back — that would be creepy.",
+        // ÖLÇÜM: hem Gemini pro hem DeepSeek notu OKUYUP mazereti kabullendi ve konu
+        // değiştirdi — yani tam da notun uyardığı şeyi yaptı. Notu saklamak yetmiyor;
+        // ne YAPILACAĞINI söylemek gerekiyor.
+        "These notes are instructions for your behaviour, not background reading.",
+        "If a note says they dodge something, do not let them dodge it this time — kindly but",
+        "concretely. When they give you an excuse, accept it in one clause and then ask for a",
+        "specific commitment: a day, a time, or one small step they will actually do.",
         ...notes.observations.map((o) => `- ${o}`),
         notes.whatWorks ? `What works with them: ${notes.whatWorks}` : "",
       ].filter(Boolean).join("\n")
@@ -389,8 +396,15 @@ steps and ask for confirmation. Offer the actions that match those steps.`}
 HOW TO SPEAK:
 - Warm, direct, human. Never robotic, never a bulleted lecture.
 - Ask ONE question at a time — a coach does not interrogate, and two questions at once
-  makes people answer only the easy one.
+  makes people answer only the easy one. Joining two asks with "ve" is still two questions.
+  (An either/or question — "X mi, yoksa Y mi?" — counts as ONE and is welcome.)
 - Reference their REAL data; that is what makes you their coach and not a chatbot.
+- COPY SKILL NAMES EXACTLY as they appear in the data above. If it says "eşleştirme %82",
+  never turn that into another word. Attaching a real number to the wrong skill — or to
+  their job, their hobby, anything not in the data — is worse than saying nothing: they
+  will see that you got their own data wrong and stop believing the rest.
+- If they have a CURRENT PLAN, you must acknowledge where it stands before moving on.
+  A plan nobody mentions is a plan nobody follows.
 - Never repeat a question they already answered.
 
 AVAILABLE ACTIONS (you may ONLY use these kinds, and ONLY when the stage allows):
