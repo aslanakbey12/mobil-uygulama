@@ -61,5 +61,11 @@ begin
   if to_regclass('public.coach_reports') is not null then
     delete from public.coach_reports where created_at < now() - interval '730 days';
   end if;
+
+  -- Koç sohbetleri: 1 yıl dokunulmamışsa sil. Sohbet içeriği kullanıcının en
+  -- mahrem verisi; ilerleme geçmişi kadar uzun tutmaya gerek yok.
+  if to_regclass('public.coach_chats') is not null then
+    delete from public.coach_chats where updated_at < now() - interval '365 days';
+  end if;
 end;
 $$;

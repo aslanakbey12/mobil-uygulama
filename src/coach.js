@@ -178,7 +178,45 @@ function sanitizePlan(p) {
   };
 }
 
-export async function coachReply({ profile, plan, history, first }) {
+// ── SOHBET HAFIZASI (db/16_coach_chats.sql) ─────────────────────────────────
+// Geçmiş artık SUNUCUDA. Eskiden istemci her istekte kendi geçmişini
+// gönderiyordu; bu üç şeyi birden bozuyordu: ekran kapanınca sohbet yok
+// oluyordu, ikinci cihazda hiç yoktu, ve kimse kaliteyi göremiyordu.
+const CHAT_CAP = 80;   // saklanan mesaj sayısı — sohbet sınırsız büyümesin
+
+export async function loadChat(userId) {
+  const db = supa();
+  if (!db || !userId) return { messages: [], updatedAt: null };
+  try {
+    const { data, error } = await db.from("coach_chats")
+      .select("messages, updated_at").eq("user_id", userId).maybeSingle();
+    if (error || !data) return { messages: [], updatedAt: null };
+    return { messages: Array.isArray(data.messages) ? data.messages : [], updatedAt: data.updated_at };
+  } catch (_) { return { messages: [], updatedAt: null }; }
+}
+
+export async function saveChat(userId, messages) {
+  const db = supa();
+  if (!db || !userId) return;
+  try {
+    await db.from("coach_chats").upsert({
+      user_id: userId,
+      messages: messages.slice(-CHAT_CAP),
+      updated_at: new Date().toISOString(),
+    });
+  } catch (_) { /* yazamamak cevabı geçersiz kılmaz; sadece o mesaj hatırlanmaz */ }
+}
+
+// Son mesajdan bu yana geçen süre → seans sınırı. Ayrı "seans" kaydı tutmuyoruz;
+// koçluk ilişkisi sürekli, aradaki boşluk zamandan anlaşılır. Bu sayede koç
+// "üç gündür yoksun" diyebiliyor — ki bir koçu koç yapan şey bu.
+function aradanGecen(updatedAt) {
+  if (!updatedAt) return null;
+  const gun = Math.floor((Date.now() - new Date(updatedAt).getTime()) / 86400000);
+  return Number.isFinite(gun) && gun >= 0 ? gun : null;
+}
+
+export async function coachReply({ profile, plan, history, first, gapDays = null }) {
   const pf = String(profile || "").slice(0, 900);
   const konusma = (Array.isArray(history) ? history : []).slice(-10)
     .map((m) => `${m.mine ? "Learner" : "Coach"}: ${String(m.text || "").slice(0, 300)}`)
@@ -191,8 +229,23 @@ export async function coachReply({ profile, plan, history, first }) {
   // Kullanıcı geri bildirimi: "girdim, ilk mesajdan beni bir yere yönlendiriyor,
   // saçma." Haklıydı — eski istem "3-5 mesajda yönlendir" diyordu ve model bunu
   // "hemen yönlendir" diye uyguluyordu. Gerçek bir koç önce ANLAR, sonra yönlendirir.
-  const tur = (Array.isArray(history) ? history : []).filter((m) => m.mine).length;
+  const hepsi = Array.isArray(history) ? history : [];
+  const tur = hepsi.filter((m) => m.mine).length;
   const asama = tur === 0 ? "TANIŞMA" : tur < 3 ? "ANLAMA" : tur < 5 ? "TEŞHİS" : "PLAN";
+
+  // GEÇMİŞ SEANSLAR. Koç yalnızca son 10 mesajı görmemeli — o kadarı "bu
+  // seansta ne konuştuk" demek. Daha eskisi "seni tanıyorum" demek, ve bir koçu
+  // koç yapan fark tam olarak bu. Eski kısım özet olarak veriliyor: tamamını
+  // göndermek hem maliyeti hem gecikmeyi büyütür, hem de modelin dikkatini dağıtır.
+  const eski = hepsi.slice(0, -10);
+  const gecmis = eski.length
+    ? `EARLIER SESSIONS (older context, ${eski.length} messages):\n${eski.slice(-16)
+        .map((m) => `${m.mine ? "Learner" : "Coach"}: ${String(m.text || "").slice(0, 140)}`).join("\n")}`
+    : "";
+  const ara = gapDays == null ? ""
+    : gapDays >= 1
+      ? `They were last here ${gapDays} day(s) ago. Acknowledge the gap naturally — do NOT re-introduce yourself, you already know each other.`
+      : "They were here earlier today. Continue naturally, do not restart.";
 
   const prompt = `You are this learner's personal English coach. Speak TURKISH, address them as "sen".
 This is a COACHING SESSION, not a chatbot. A real coach listens first, understands the
@@ -202,12 +255,16 @@ WHAT YOU KNOW ABOUT THEM (real data from the app):
 ${pf}
 
 ${mevcutPlan}
+${gecmis}
+${ara}
 
 SESSION STAGE: ${asama}
-${asama === "TANIŞMA" ? `Open the session. Introduce yourself briefly as their coach. Say ONE concrete
+${asama === "TANIŞMA" ? (eski.length ? `Open a NEW session with someone you already know. Do NOT introduce yourself again.
+Reference something concrete from your earlier sessions (their goal, something they said,
+or whether they did what you agreed). Then ask how it went. NO actions yet.` : `Open the session. Introduce yourself briefly as their coach. Say ONE concrete
 thing you already see in their data (a real number or a real weak word) so they feel known.
 Then ask ONE open question about what they want from English.
-DO NOT suggest any action yet. DO NOT return any actions. This is hello.`
+DO NOT suggest any action yet. DO NOT return any actions. This is hello.`)
   : asama === "ANLAMA" ? `Keep listening. Ask about their goal, deadline, where they use English,
 what they find hardest. React to what they actually said — do not change the subject.
 Still NO actions. You are building understanding.`

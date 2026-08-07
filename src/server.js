@@ -536,12 +536,40 @@ app.post("/coach/chat", async (req, reply) => {
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük YZ hakkın doldu, yarın tekrar dene." });
   aiquota.bumpAi(userId);
-  const { profile, plan, history, first } = req.body || {};
+  const { profile, plan, text } = req.body || {};
   try {
-    return await coach.coachReply({ profile, plan, history, first: !!first });
+    // GEÇMİŞ SUNUCUDAN. İstemci artık kendi geçmişini taşımıyor — yalnızca yeni
+    // mesajını gönderiyor. Böylece sohbet ekran kapanınca kaybolmuyor, ikinci
+    // cihazda da sürüyor, ve kalitesi görülebiliyor.
+    const { messages, updatedAt } = await coach.loadChat(userId);
+    const gecmis = messages.map((m) => ({ mine: m.m === 1, text: m.t }));
+    const yeni = String(text || "").slice(0, 1000).trim();
+    if (yeni) gecmis.push({ mine: true, text: yeni });
+
+    const gapDays = updatedAt ? Math.floor((Date.now() - new Date(updatedAt).getTime()) / 86400000) : null;
+    const out = await coach.coachReply({ profile, plan, history: gecmis, first: !messages.length, gapDays });
+
+    // Kullanıcının mesajı + koçun cevabı kalıcıya. Hata YUTULMAZ değil ama
+    // isteği düşürmez: kaydedilemeyen mesaj hatırlanmaz, cevap yine gider.
+    const kayit = messages.slice();
+    if (yeni) kayit.push({ m: 1, t: yeni, at: new Date().toISOString() });
+    if (out.reply) kayit.push({ m: 0, t: out.reply, at: new Date().toISOString() });
+    await coach.saveChat(userId, kayit);
+
+    return { ...out, history: gecmis.concat(out.reply ? [{ mine: false, text: out.reply }] : []) };
   } catch (e) {
     return reply.code(502).send({ error: String(e.message || e) });
   }
+});
+
+// Koç sohbet geçmişi — ekran açılışında yüklenir.
+// AYRI UÇ: /coach/chat'i boş metinle çağırmak her açılışta yeni bir YZ cevabı
+// üretirdi (hem maliyet hem "koç kendi kendine konuşuyor" hissi).
+app.get("/coach/history", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const { messages } = await coach.loadChat(userId);
+  return { history: messages.map((m) => ({ mine: m.m === 1, text: m.t, at: m.at || null })) };
 });
 
 // Haftalık lig: kullanıcının haftalık XP'sini bildir, pod sıralamasını al
