@@ -541,13 +541,13 @@ app.post("/coach/chat", async (req, reply) => {
     // GEÇMİŞ SUNUCUDAN. İstemci artık kendi geçmişini taşımıyor — yalnızca yeni
     // mesajını gönderiyor. Böylece sohbet ekran kapanınca kaybolmuyor, ikinci
     // cihazda da sürüyor, ve kalitesi görülebiliyor.
-    const { messages, updatedAt } = await coach.loadChat(userId);
+    const { messages, updatedAt, notes, noteMark } = await coach.loadChat(userId);
     const gecmis = messages.map((m) => ({ mine: m.m === 1, text: m.t }));
     const yeni = String(text || "").slice(0, 1000).trim();
     if (yeni) gecmis.push({ mine: true, text: yeni });
 
     const gapDays = updatedAt ? Math.floor((Date.now() - new Date(updatedAt).getTime()) / 86400000) : null;
-    const out = await coach.coachReply({ profile, plan, history: gecmis, first: !messages.length, gapDays });
+    const out = await coach.coachReply({ profile, plan, history: gecmis, first: !messages.length, gapDays, notes });
 
     // Kullanıcının mesajı + koçun cevabı kalıcıya. Hata YUTULMAZ değil ama
     // isteği düşürmez: kaydedilemeyen mesaj hatırlanmaz, cevap yine gider.
@@ -555,6 +555,15 @@ app.post("/coach/chat", async (req, reply) => {
     if (yeni) kayit.push({ m: 1, t: yeni, at: new Date().toISOString() });
     if (out.reply) kayit.push({ m: 0, t: out.reply, at: new Date().toISOString() });
     await coach.saveChat(userId, kayit);
+
+    // KOÇUN NOTLARI — cevabı BEKLETMEDEN, arka planda. Kullanıcı koçun cevabını
+    // beklerken bir de not üretimini beklememeli; not bu turda değil bir
+    // sonrakinde işe yarayacak zaten. Yeterli yeni mesaj birikince tetiklenir.
+    if (coach.notesDue(kayit.length, noteMark)) {
+      coach.updateNotes({ notes, history: gecmis.concat(out.reply ? [{ mine: false, text: out.reply }] : []) })
+        .then((n) => (n ? coach.saveNotes(userId, n, kayit.length) : null))
+        .catch(() => {});   // not üretimi başarısız olsa da sohbet etkilenmez
+    }
 
     return { ...out, history: gecmis.concat(out.reply ? [{ mine: false, text: out.reply }] : []) };
   } catch (e) {

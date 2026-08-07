@@ -7,7 +7,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-const { weekKey, ACTIONS } = await import("../src/coach.js");
+const { weekKey, ACTIONS, notesDue } = await import("../src/coach.js");
 
 describe("hafta anahtarı", () => {
   test("haftanın HER GÜNÜ aynı pazartesiyi verir", () => {
@@ -65,5 +65,38 @@ describe("koç eylemleri", () => {
     for (const [k, v] of Object.entries(ACTIONS)) {
       assert.ok(typeof v === "string" && v.length > 10, `${k} açıklaması yetersiz`);
     }
+  });
+});
+
+// ── Koçun notları ───────────────────────────────────────────────────────────
+// Koç her mesajda kullanıcıyı sıfırdan okuyup kanaat oluşturuyordu. Notlar
+// "bu kişi nasıl biri" sorusunun kalıcı cevabı — sohbet geçmişinden farklı bir
+// şey (geçmiş olay kaydı, not yargı).
+//
+// notesDue() maliyeti belirliyor: her cevapta not üretmek gereksiz bir YZ
+// çağrısı olurdu. Bu testler eşiğin sessizce kaymasını engeller.
+describe("koç notları — güncelleme eşiği", () => {
+  test("yeni sohbette daha not üretilmez", () => {
+    assert.equal(notesDue(0, 0), false);
+    assert.equal(notesDue(2, 0), false);
+  });
+
+  test("yeterli mesaj birikince üretilir", () => {
+    assert.equal(notesDue(6, 0), true);
+    assert.equal(notesDue(9, 0), true);
+  });
+
+  test("not yazıldıktan sonra sayaç SIFIRLANIR — her mesajda tekrar üretmez", () => {
+    // Asıl maliyet tuzağı burada: mark güncellenmezse 6. mesajdan sonra
+    // HER cevapta not üretilirdi.
+    assert.equal(notesDue(8, 6), false);
+    assert.equal(notesDue(11, 6), false);
+    assert.equal(notesDue(12, 6), true);
+  });
+
+  test("bozuk mark değeri çökmez, 0 sayılır", () => {
+    assert.equal(notesDue(6, null), true);
+    assert.equal(notesDue(6, undefined), true);
+    assert.equal(notesDue(3, "abc"), false);
   });
 });

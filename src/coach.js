@@ -186,13 +186,18 @@ const CHAT_CAP = 80;   // saklanan mesaj sayısı — sohbet sınırsız büyüm
 
 export async function loadChat(userId) {
   const db = supa();
-  if (!db || !userId) return { messages: [], updatedAt: null };
+  if (!db || !userId) return { messages: [], updatedAt: null, notes: null, noteMark: 0 };
   try {
     const { data, error } = await db.from("coach_chats")
-      .select("messages, updated_at").eq("user_id", userId).maybeSingle();
-    if (error || !data) return { messages: [], updatedAt: null };
-    return { messages: Array.isArray(data.messages) ? data.messages : [], updatedAt: data.updated_at };
-  } catch (_) { return { messages: [], updatedAt: null }; }
+      .select("messages, updated_at, notes, note_mark").eq("user_id", userId).maybeSingle();
+    if (error || !data) return { messages: [], updatedAt: null, notes: null, noteMark: 0 };
+    return {
+      messages: Array.isArray(data.messages) ? data.messages : [],
+      updatedAt: data.updated_at,
+      notes: data.notes || null,
+      noteMark: Number(data.note_mark) || 0,
+    };
+  } catch (_) { return { messages: [], updatedAt: null, notes: null, noteMark: 0 }; }
 }
 
 export async function saveChat(userId, messages) {
@@ -207,6 +212,77 @@ export async function saveChat(userId, messages) {
   } catch (_) { /* yazamamak cevabı geçersiz kılmaz; sadece o mesaj hatırlanmaz */ }
 }
 
+// ── KOÇUN NOTLARI (db/17_coach_notes.sql) ───────────────────────────────────
+//
+// Sohbet geçmişinden FARKLI bir şey: geçmiş "ne konuşuldu", not "bu kişi nasıl
+// biri". Biri olay kaydı, diğeri yargı. Koç her mesajda kullanıcıyı sıfırdan
+// okuyup kanaat oluşturuyordu; artık birikmiş bir kanaati var.
+const NOTE_EVERY = 6;    // kaç yeni mesajda bir not güncellensin
+
+// Notları GÜNCELLE (sıfırdan yazma). Eskiyi verip "değiştir/ekle/çıkar" demek,
+// her seferinde baştan yazdırmaktan farklı: gözlem birikir, çelişen eski gözlem
+// düşer. Baştan yazsaydık koçun hafızası her seans sıfırlanırdı — çözmeye
+// çalıştığımız sorunun aynısı.
+export async function updateNotes({ notes, history }) {
+  const son = (Array.isArray(history) ? history : []).slice(-20)
+    .map((m) => `${m.mine ? "Learner" : "Coach"}: ${String(m.text || "").slice(0, 200)}`).join("\n");
+  if (!son) return null;
+
+  const mevcut = notes?.observations?.length
+    ? `EXISTING NOTES:\n${notes.observations.map((o) => `- ${o}`).join("\n")}\nWhat works: ${notes.whatWorks || "—"}`
+    : "EXISTING NOTES: none yet.";
+
+  const prompt = `You are an English coach keeping PRIVATE notes about a learner, like a real
+coach would between sessions. These notes are for YOU, not shown to the learner.
+
+${mevcut}
+
+RECENT CONVERSATION:
+${son}
+
+Update your notes. Write in TURKISH.
+
+What belongs in notes: how this person BEHAVES and what works with them.
+  Good: "tarih vermekten kaçınıyor", "söz veriyor ama yapmıyor",
+        "meydan okumaya iyi tepki veriyor", "sabah çalışıyor"
+  Bad (do NOT write these): what they know, their level, word counts —
+  you already get that from the app data. Notes are about the PERSON.
+
+Rules:
+- Keep at most 6 observations. Drop ones that are now contradicted or stale.
+- Each observation max 12 words, concrete, based on something they actually said or did.
+- If the conversation gave you nothing new, return the existing notes unchanged.
+- Never invent. If you have no basis for a judgement, leave it out.
+
+Return ONLY JSON:
+{ "observations": ["…"], "whatWorks": "one short sentence about how to motivate them, or empty" }`;
+
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 350 },
+  };
+  const txt = await geminiText(body, { timeout: 20000, tries: 1, prefer: COACH_MODEL });
+  const p = JSON.parse(extractJson(txt));
+  const obs = (Array.isArray(p.observations) ? p.observations : [])
+    .map((o) => String(o).slice(0, 90)).filter(Boolean).slice(0, 6);
+  if (!obs.length) return null;
+  return { observations: obs, whatWorks: String(p.whatWorks || "").slice(0, 160), updatedAt: new Date().toISOString() };
+}
+
+// Notlar yeterince yeni mesaj birikince güncellenir. Her cevapta üretmek
+// gereksiz maliyet ve gecikme olurdu.
+export function notesDue(messageCount, noteMark) {
+  return messageCount - (Number(noteMark) || 0) >= NOTE_EVERY;
+}
+
+export async function saveNotes(userId, notes, mark) {
+  const db = supa();
+  if (!db || !userId || !notes) return;
+  try {
+    await db.from("coach_chats").update({ notes, note_mark: mark }).eq("user_id", userId);
+  } catch (_) { /* not yazamamak sohbeti bozmaz — sonraki turda tekrar denenir */ }
+}
+
 // Son mesajdan bu yana geçen süre → seans sınırı. Ayrı "seans" kaydı tutmuyoruz;
 // koçluk ilişkisi sürekli, aradaki boşluk zamandan anlaşılır. Bu sayede koç
 // "üç gündür yoksun" diyebiliyor — ki bir koçu koç yapan şey bu.
@@ -216,7 +292,7 @@ function aradanGecen(updatedAt) {
   return Number.isFinite(gun) && gun >= 0 ? gun : null;
 }
 
-export async function coachReply({ profile, plan, history, first, gapDays = null }) {
+export async function coachReply({ profile, plan, history, first, gapDays = null, notes = null }) {
   const pf = String(profile || "").slice(0, 900);
   const konusma = (Array.isArray(history) ? history : []).slice(-10)
     .map((m) => `${m.mine ? "Learner" : "Coach"}: ${String(m.text || "").slice(0, 300)}`)
@@ -237,6 +313,18 @@ export async function coachReply({ profile, plan, history, first, gapDays = null
   // seansta ne konuştuk" demek. Daha eskisi "seni tanıyorum" demek, ve bir koçu
   // koç yapan fark tam olarak bu. Eski kısım özet olarak veriliyor: tamamını
   // göndermek hem maliyeti hem gecikmeyi büyütür, hem de modelin dikkatini dağıtır.
+  // KOÇUN KENDİ NOTLARI — istemin en başında. "Bu kişi ne biliyor" verisi
+  // zaten var; bu, "bu kişi nasıl biri" sorusunun cevabı ve koçu sohbet
+  // botundan ayıran şey.
+  const not = notes?.observations?.length
+    ? [
+        "YOUR PRIVATE NOTES ABOUT THIS PERSON (from earlier sessions).",
+        "Use them to shape how you talk to them. NEVER quote them back — that would be creepy.",
+        ...notes.observations.map((o) => `- ${o}`),
+        notes.whatWorks ? `What works with them: ${notes.whatWorks}` : "",
+      ].filter(Boolean).join("\n")
+    : "";
+
   const eski = hepsi.slice(0, -10);
   const gecmis = eski.length
     ? `EARLIER SESSIONS (older context, ${eski.length} messages):\n${eski.slice(-16)
@@ -253,6 +341,8 @@ person, reflects back what they see, and only then proposes a plan — together.
 
 WHAT YOU KNOW ABOUT THEM (real data from the app):
 ${pf}
+
+${not}
 
 ${mevcutPlan}
 ${gecmis}
