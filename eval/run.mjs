@@ -43,7 +43,10 @@ const SAGLAYICILAR = {
   gemini:     { provider: "gemini", varsayilanModel: "gemini-pro-latest" },
   deepseek:   { provider: "openai", base: "https://api.deepseek.com/v1",              anahtar: "DEEPSEEK_API_KEY",   varsayilanModel: "deepseek-v4-flash" },
   openrouter: { provider: "openai", base: "https://openrouter.ai/api/v1",             anahtar: "OPENROUTER_API_KEY", varsayilanModel: "anthropic/claude-haiku-4.5" },
-  qwen:       { provider: "openai", base: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", anahtar: "QWEN_API_KEY", varsayilanModel: "qwen3.7-plus" },
+  // Qwen ULUSLARARASI (Singapur). Konsolda gösterilen uç adresi hesaba göre
+  // değişebiliyor (bazı hesaplarda workspace'e özgü *.maas.aliyuncs.com adresi
+  // veriliyor), o yüzden QWEN_BASE_URL ile ezilebilir.
+  qwen:       { provider: "openai", base: process.env.QWEN_BASE_URL || "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", anahtar: "QWEN_API_KEY", varsayilanModel: "qwen3.7-plus" },
 };
 
 const provArg = args.find((a) => a.startsWith("--provider="));
