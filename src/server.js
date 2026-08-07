@@ -349,7 +349,10 @@ app.post("/reading/generate", async (req, reply) => {
     });
   }
   const { level, words, knownSample, topic } = req.body || {};
-  const list = Array.isArray(words) ? [...new Set(words.filter(Boolean).map(String))].slice(0, 8) : [];
+  // 3 KELİME. Eskiden 8'di. Daha az hedef kelime = parçanın onlara ayıracağı yer
+  // artar, metin "kelime tıkıştırılmış" olmaktan çıkar. Sunucu da kesiyor:
+  // istemcinin gönderdiği sayıya güvenmek, maliyeti istemciye emanet etmek olurdu.
+  const list = Array.isArray(words) ? [...new Set(words.filter(Boolean).map(String))].slice(0, 3) : [];
   const known = Array.isArray(knownSample) ? knownSample.filter(Boolean).map(String).slice(0, 15) : [];
   const theme = String(topic || "").slice(0, 60);
   if (list.length < 1) return reply.code(400).send({ error: "Yeterli kelime yok. Önce Kelimeler'de birkaç kelime çalış." });
@@ -415,7 +418,7 @@ app.post("/reading/rate", async (req, reply) => {
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   const { key, up } = req.body || {};
   if (!key) return reply.code(400).send({ error: "key gerekli" });
-  const r = reading.rateReading(String(key).slice(0, 160), !!up);
+  const r = await reading.rateReading(String(key).slice(0, 160), !!up);
   return { ok: true, ...r };
 });
 
@@ -489,6 +492,23 @@ app.post("/word/image", async (req, reply) => {
 // anladığına inanmasından geçiyor; o inancı kuran şey bu rapor. Ücretli tarafa
 // saklasaydık, kimse görmeden karar vermek zorunda kalırdı.
 // Maliyeti de küçük: haftada tek çağrı, önbellekli (aynı hafta tekrar üretilmez).
+// PREMIUM KAPISI — koç ve YZ modları.
+//
+// Bu uçlar YZ faturasının pahalı ucu: koç mesajı başına ~₺0,75 (pro modeli +
+// düşünme token'ları). Ücretsiz kullanıcıya açık kaldığında tipik bir premium
+// abonenin bile getirdiğinden fazlasını harcıyorduk.
+//
+// KAPI SUNUCUDA. İstemcide kilit çizmek yeterli değil: istekleri doğrudan atan
+// biri parayı yine harcatır. İstemci kilidi görgü kuralı, bu satır ise fatura.
+//
+// `upgrade: true` istemciye Paywall'a yönlendirmesini söyler — çıkmaz sokak
+// yerine satın alma yolu gösterilir.
+async function premiumKapisi(userId, reply, ne) {
+  if (await isPremium(userId)) return false;
+  reply.code(402).send({ error: ne + " Premium ile açılıyor.", upgrade: true });
+  return true;
+}
+
 app.post("/coach/weekly", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
@@ -518,6 +538,7 @@ app.post("/ai/grammar-lesson", async (req, reply) => {
   if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük YZ hakkın doldu, yarın tekrar dene." });
   const { topic, level, weakWords } = req.body || {};
   if (!lesson.topicKnown(topic)) return reply.code(400).send({ error: "bilinmeyen konu" });
+  if (await premiumKapisi(userId, reply, "Gramer dersleri")) return;
   aiquota.bumpAi(userId);
   try {
     return await lesson.grammarLesson({ topic, level, weakWords });
@@ -533,6 +554,7 @@ app.post("/coach/chat", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!coach.coachConfigured()) return reply.code(503).send({ error: "Koç yakında." });
+  if (await premiumKapisi(userId, reply, "Kişisel koç")) return;
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük YZ hakkın doldu, yarın tekrar dene." });
   aiquota.bumpAi(userId);
@@ -748,6 +770,9 @@ app.post("/rooms/ai", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!chatAI.chatConfigured()) return reply.code(503).send({ error: "AI sohbet yakında etkinleşecek." });
+  // Senaryo provası da premium. Oda AÇILDIKTAN sonra her mesaj ayrı bir YZ
+  // çağrısı; ücretsiz tarafta en kolay kaçak maliyet kalemi burasıydı.
+  if (await premiumKapisi(userId, reply, "Senaryo provası")) return;
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük AI hakkın doldu, yarın tekrar dene." });
   aiquota.bumpAi(userId);

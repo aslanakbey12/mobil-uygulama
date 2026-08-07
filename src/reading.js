@@ -6,6 +6,8 @@ const KEY = process.env.GEMINI_API_KEY || "";
 // Not: eski modeller (2.0, 2.5-flash) yeni kullanıcılara kapatıldı. "flash-latest"
 // her zaman güncel GA flash'a (şu an 3.5-flash) çözülür ve yeni kullanıcılara açıktır.
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
+// Okuma parçası için ayrı model (boş = genel zincir). bkz. generatePassage.
+const READING_MODEL = process.env.READING_MODEL || "";
 // Günlük okuma üretimi tavanı — KADEMEYE DUYARLI.
 //
 // Eskiden tek sayıydı (20) ve premium'a bakmıyordu. İki ayrı sorun yaratıyordu:
@@ -52,9 +54,42 @@ export async function listModels() {
   } catch (e) { return [String(e.message || e)]; }
 }
 
-const cache = new Map();       // `${level}|${words}` -> passage
-const CACHE_CAP = 500;
+// İKİ KATMANLI ÖNBELLEK.
+//
+// Bellek katmanı sıcak parçalar için (DB gidiş-dönüşü bile olmasın), KALICI
+// katman ise asıl iş: bellek içi Map her yeniden başlatmada siliniyordu ve
+// ölçtüğümüz isabet %21'de kalıyordu. Kalıcı ortak önbellekle %69'a çıkıyor,
+// 6. ayda %93. Okuma YZ faturamızın en büyük kalemi olduğu için tek en büyük
+// tasarruf bu. (bkz. db/18_reading_cache.sql)
+const cache = new Map();       // `${seviye}|${tema}|${kelimeler}` -> passage
+const CACHE_CAP = 500;         // yalnızca BELLEK katmanı için; kalıcı katman sınırsız
 const daily = new Map();       // userId -> { day, n }
+
+// Kalıcı katmandan oku. Hata yutulur: önbellek bir HIZLANDIRMA, arıza halinde
+// parça yine üretilir — DB sorunu okumayı çökertmemeli.
+async function cacheGet(key) {
+  const db = supa();
+  if (!db) return null;
+  try {
+    const { data, error } = await db.from("reading_cache").select("passage").eq("key", key).maybeSingle();
+    if (error || !data?.passage) return null;
+    db.rpc("touch_reading_cache", { k: key }).then(() => {}, () => {});   // sayaç: bekleme
+    return data.passage;
+  } catch (_) { return null; }
+}
+
+async function cachePut(key, passage) {
+  const db = supa();
+  if (!db) return;
+  try { await db.from("reading_cache").upsert({ key, passage, last_hit_at: new Date().toISOString() }); }
+  catch (_) { /* yazamamak parçayı geçersiz kılmaz — sadece bir dahakine yeniden üretilir */ }
+}
+
+async function cacheDrop(key) {
+  const db = supa();
+  if (!db) return;
+  try { await db.from("reading_cache").delete().eq("key", key); } catch (_) { /* yok say */ }
+}
 
 function today() { return new Date().toISOString().slice(0, 10); }
 
@@ -140,6 +175,15 @@ function modelChain() {
 
 // Test için dışa aktarım (model uyumluluğu sessizce daralmasın).
 export { bodyFor as __bodyForTest };
+export { buildPrompt as __buildPromptTest };
+
+// Model karşılaştırması için (scripts/model-ab.mjs). bodyFor'dan GEÇİYOR:
+// lite ve pro modelleri thinkingConfig'i reddedip 400 döner, ham gövdeyle
+// atmak karşılaştırmayı model farkı değil istek hatası olarak gösterirdi.
+export function __postGeminiTest(model, body, ms = 60000) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
+  return postGemini(url, bodyFor(model, { safetySettings: SAFETY, ...body }), ms);
+}
 
 // Teşhis/izleme için (sağlık ucunda gösterilebilir).
 export function activeModel() { return lastGoodModel; }
@@ -407,6 +451,10 @@ Return ONLY JSON: {"en": string, "tr": string}`;
 export async function generatePassage(level, words, opts = {}) {
   const cacheKey = `${level}|${opts.topic || ""}|${[...words].sort().join(",")}`;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
+  // KALICI KATMAN. Süreç yeni başlamış olsa bile başka bir kullanıcının (ya da
+  // bu kullanıcının dünkü oturumunun) ürettiği parça burada duruyor.
+  const kalici = await cacheGet(cacheKey);
+  if (kalici) { cache.set(cacheKey, kalici); return kalici; }
   if (!KEY) throw new Error("Okuma servisi henüz yapılandırılmadı.");
 
   const body = {
@@ -414,14 +462,21 @@ export async function generatePassage(level, words, opts = {}) {
     generationConfig: {
       responseMimeType: "application/json",
       temperature: 0.8,
-      maxOutputTokens: 3500,  // passage + 3 soru + glossary sığsın ama az çıktı = hızlı
+      // Çıktı tavanı %20 kısıldı (3500 → 2800). Çıktı token'ı faturanın büyük
+      // kısmı; parça + 3 soru + sözlükçe buraya rahat sığıyor.
+      maxOutputTokens: 2800,
       thinkingConfig: { thinkingBudget: 0 }, // düşünme kapalı: hızlı/ucuz
     },
   };
   // Model-yedekli + retry (503'te birincilde birkaç kez, sonra pro-latest yedeğe geçer).
+  //
+  // READING_MODEL ile okuma için ayrı model seçilebilir. Ayarlanabilir bırakıldı
+  // çünkü okuma faturanın en büyük kalemi ve flash-lite çıktıda 3,6 kat ucuz —
+  // ama kalite kararı ölçümle verilecek. Ayar env'de olunca geçiş (ya da geri
+  // dönüş) yeni dağıtım değil, tek değer değişikliği.
   let out;
   try {
-    const txt = await geminiText(body, { timeout: 50000, tries: 2 });
+    const txt = await geminiText(body, { timeout: 50000, tries: 2, prefer: READING_MODEL || null });
     const clean = extractJson(txt);
     // Gemini çıktısı token sınırında kesilebilir → JSON yarım kalır (örn. glossary'nin
     // son öğesi eksik). Önce düz parse, olmazsa onar (yarım son öğe atılır, gerisi kurtarılır).
@@ -436,24 +491,45 @@ export async function generatePassage(level, words, opts = {}) {
   out.key = cacheKey;   // istemci kaliteyi bu anahtarla oylar
   if (cache.size >= CACHE_CAP) cache.delete(cache.keys().next().value);
   cache.set(cacheKey, out);
+  // Kalıcı katmana yaz — asıl tasarruf burada. Beklemiyoruz: kullanıcının
+  // parçası hazır, DB yazımı onu geciktirmemeli.
+  cachePut(cacheKey, out).catch(() => {});
   return out;
 }
 
 // Kalite geri bildirimi (kalabalık-kaynaklı kalite kontrolü). Bir parça yeterince
 // olumsuz oy alırsa önbellekten silinir → sonraki kullanıcıya YENİ parça üretilir.
-const readingFeedback = new Map(); // cacheKey -> { up, down }
-export function rateReading(key, up) {
+// SAYAÇLAR DB'DEN OKUNUR. Eskiden yalnızca bu Map'teydi ve her yeniden başlatmada
+// sıfırlanıyordu; persistFeedback da sıfırlanmış sayacı DB'nin ÜZERİNE yazıyordu.
+// Sonuç: 2 olumsuz oy almış bir parça, yeniden başlatmadan sonra 1'den başlıyordu
+// ve 3 eşiğine hiç ulaşamıyordu. Önbellek bellekteyken bunun bedeli sınırlıydı —
+// zaten silinip gidiyordu. Önbellek KALICI olduğu andan itibaren aynı kusur "kötü
+// parça sonsuza kadar herkese servis edilir" anlamına geliyor. Kalıcı önbellek,
+// kalite kontrolünün de kalıcı olmasını zorunlu kılıyor.
+const readingFeedback = new Map(); // cacheKey -> { up, down }  (yalnızca sıcak kopya)
+
+async function oylariGetir(key) {
+  if (readingFeedback.has(key)) return readingFeedback.get(key);
+  const db = supa();
+  if (!db) return { up: 0, down: 0 };
+  try {
+    const { data, error } = await db.from("content_feedback")
+      .select("up, down").eq("kind", "reading").eq("ref", key).maybeSingle();
+    if (error || !data) return { up: 0, down: 0 };
+    return { up: Number(data.up) || 0, down: Number(data.down) || 0 };
+  } catch (_) { return { up: 0, down: 0 }; }
+}
+
+export async function rateReading(key, up) {
   if (!key) return { replaced: false };
-  const f = readingFeedback.get(key) || { up: 0, down: 0 };
+  const f = await oylariGetir(key);
   if (up) f.up++; else f.down++;
   readingFeedback.set(key, f);
-  // KALICI KAYIT: bu sinyal eskiden yalnızca bellekteydi ve her dağıtımda çöpe
-  // gidiyordu. Artık DB'ye de yazılır → hangi parçaların beğenilmediğini zaman
-  // içinde görebiliriz (içerik kalitesi için tek gerçek geri bildirimimiz).
   persistFeedback("reading", key, f);
   if (f.down >= 3 && f.down > f.up) {           // eşik: 3+ olumsuz ve olumsuz > olumlu
-    cache.delete(key);                           // önbellekten çıkar → yeniden üretilir
-    readingFeedback.delete(key);
+    cache.delete(key);                           // bellek katmanı
+    await cacheDrop(key);                        // KALICI katman — burası atlanırsa
+    readingFeedback.delete(key);                 // kötü parça herkese servis edilmeye devam eder
     return { replaced: true };
   }
   return { replaced: false };
