@@ -17,8 +17,12 @@ const KEY = process.env.GEMINI_API_KEY || "";
 // OpenAI uyumlu sağlayıcılar (DeepSeek, OpenRouter, OpenAI, Together, Fireworks…)
 // aynı istek şeklini kullanıyor; tek bir uyarlayıcı hepsini karşılıyor.
 const PROVIDER = process.env.LLM_PROVIDER || "gemini";
-const BASE_URL = process.env.LLM_BASE_URL || "";
-const ALT_KEY = process.env.LLM_API_KEY || "";
+// OPENROUTER_API_KEY tek başına yeterli olsun: adres sabit, üç ayrı ortam
+// değişkenini tutarlı tutmak gereksiz bir hata kaynağı. LLM_BASE_URL/LLM_API_KEY
+// başka bir OpenAI-uyumlu sağlayıcıya (DeepSeek doğrudan, Qwen, yerel) geçmek
+// isteyince ezmek için duruyor.
+const BASE_URL = process.env.LLM_BASE_URL || (process.env.OPENROUTER_API_KEY ? "https://openrouter.ai/api/v1" : "");
+const ALT_KEY = process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY || "";
 
 export function activeProvider() { return PROVIDER; }
 
@@ -106,11 +110,25 @@ async function openaiUyumlu(model, body, ms) {
   };
 }
 
-// Tek giriş noktası. Gövde Gemini şeklinde gelir; sağlayıcıya göre çevrilir.
+// SAĞLAYICI MODEL ADINDAN ANLAŞILIR.
+//
+// Tek bir genel LLM_PROVIDER anahtarı yanlış olurdu: onu açtığımız anda OKUMA da
+// yardımcı çağrılar da OpenRouter'a giderdi. Oysa ölçümle şuna karar verdik —
+// koç DeepSeek'te (82/83, 6 kat ucuz), okuma Gemini flash'ta (lite kalite
+// kaybettiriyordu), kısa yardımcı çağrılar flash-lite'ta.
+//
+// OpenRouter model kimlikleri "saglayici/model" biçiminde ("deepseek/deepseek-v4-pro"),
+// Gemini'ninkilerde eğik çizgi yok. Yani ad zaten hangi kapıya gideceğini söylüyor;
+// ayrı bir yapılandırma anahtarına ve onu tutarlı tutma yüküne gerek yok.
+//
+// LLM_PROVIDER hâlâ çalışıyor: her şeyi tek sağlayıcıya zorlamak için (ölçüm ve
+// acil durum kaçışı). Boşsa ad üzerinden karar verilir.
 export async function callModel(model, body, ms = 30000) {
-  if (PROVIDER === "gemini") return gemini(model, body, ms);
+  const openRouterAdi = model.includes("/");
+  const zorla = PROVIDER !== "gemini";
+  if (!openRouterAdi && !zorla) return gemini(model, body, ms);
   if (!BASE_URL || !ALT_KEY) {
-    return { ok: false, status: 0, error: `LLM_PROVIDER=${PROVIDER} ama LLM_BASE_URL/LLM_API_KEY eksik` };
+    return { ok: false, status: 0, error: `"${model}" OpenAI-uyumlu bir sağlayıcı istiyor ama LLM_BASE_URL/LLM_API_KEY eksik` };
   }
   return openaiUyumlu(model, body, ms);
 }
