@@ -320,13 +320,46 @@ export function repairJson(t) {
 }
 
 // LLM bazen JSON'u ```json ...``` içinde ya da önüne/sonuna metin ekleyerek döndürür.
+// DİZE İÇİNDEKİ KONTROL KARAKTERLERİNİ KAÇIR.
+//
+// GERÇEK OLAY: okuma parçası üretimi bazı isteklerde "Okuma oluşturulamadı" ile
+// düşüyordu. Çıktı EKSİK DEĞİLDİ (finishReason=STOP, 3472 karakter tam JSON) —
+// model paragraf arasına kaçırılmamış bir satır sonu koymuştu ve JSON standardı
+// dize içinde ham kontrol karakterini yasaklıyor:
+//   Bad control character in string literal in JSON at position 502
+//
+// repairJson bunu kurtaramıyor çünkü o KESİLME için yazıldı: sona doğru kırpıp
+// geçerli bir kapanış arıyor, oysa burada bozukluk metnin ortasında ve sonu
+// zaten sağlam. İki ayrı arıza, iki ayrı çözüm.
+//
+// Dizenin DIŞINDA kontrol karakteri (satır sonu, girinti) JSON'da geçerli, o
+// yüzden yalnızca dize içindekilere dokunuyoruz. Ters bölü kaçışları takip
+// ediliyor, yoksa `\"` bir dizeyi yanlışlıkla kapatır ve bozukluk büyürdü.
+export function escapeControls(t) {
+  let out = "";
+  let dizede = false;
+  let kacis = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (kacis) { out += c; kacis = false; continue; }
+    if (c === "\\") { out += c; kacis = true; continue; }
+    if (c === '"') { dizede = !dizede; out += c; continue; }
+    if (dizede && t.charCodeAt(i) < 0x20) {
+      out += c === "\n" ? "\\n" : c === "\r" ? "\\r" : c === "\t" ? "\\t" : "";
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
 export function extractJson(txt) {
   let t = String(txt).trim();
   t = t.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
   const first = t.indexOf("{");
   const last = t.lastIndexOf("}");
   if (first >= 0 && last > first) t = t.slice(first, last + 1);
-  return t;
+  return escapeControls(t);
 }
 
 const CEFR = ["A1", "A2", "B1", "B2", "C1", "C2"];
