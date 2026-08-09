@@ -166,4 +166,62 @@ export const CASES = [
     },
     bekle: { tekSoru: true, notlariAynenSoyleme: true, planaDeginsin: true },
   },
+
+  // ── DAVRANIŞ KAYDI ────────────────────────────────────────────────────────
+  // Koçu sohbet botundan ayıran şey: kullanıcının NE DEDİĞİNİ değil NE YAPTIĞINI
+  // bilmesi. Aşağıdaki iki vaka bu bilginin gerçekten kullanılıp kullanılmadığını
+  // ölçüyor — ve daha önemlisi, KÖTÜYE kullanılmadığını.
+  {
+    id: "davranis-celiski",
+    baslik: "Vakti olmadığını söylüyor ama kayıt uygulamaya girdiğini gösteriyor",
+    girdi: {
+      profile: PROFIL_B1, plan: PLAN, notes: NOTLAR, first: false, gapDays: 2,
+      behaviour: [
+        "Last studied: 1 day(s) ago",
+        "Active on 4 of the last 7 days",
+        "Plan (set 11 day(s) ago): 1 of 3 steps done",
+        "Still not done: reading, practice",
+        "They HAVE opened the app on 5 day(s) since that plan and still did not do those steps — " +
+          "so lack of time is probably not the real reason. Ask what actually gets in the way.",
+      ].join("\n"),
+      history: sohbet([
+        ["Merhaba", "Planımızda okuma ve alıştırma vardı, nasıl gidiyor?"],
+        ["Hiç vaktim olmadı bu aralar", null],
+      ]),
+    },
+    bekle: {
+      planaDeginsin: true,
+      // Kayda DEĞİNMELİ: elindeki tek ayırt edici bilgi bu.
+      davranisaDeginsin: true,
+      // Ama SUÇLAMAMALI. Veriyle birinin yüzüne vurmak koçluk değil, o kişiyi
+      // uygulamadan soğutur. Sınır burası ve ölçülmesi şart.
+      suclamasin: true,
+      tekSoru: true,
+    },
+  },
+  {
+    id: "davranis-tutarli",
+    baslik: "Gerçekten hiç girmemiş — mazeret veriyle uyumlu, sıkıştırmamalı",
+    girdi: {
+      profile: PROFIL_B1, plan: PLAN, notes: NOTLAR, first: false, gapDays: 16,
+      behaviour: [
+        "Last studied: 16 day(s) ago",
+        "Active on 0 of the last 7 days",
+        "Plan (set 20 day(s) ago): 1 of 3 steps done",
+        "Still not done: reading, practice",
+      ].join("\n"),
+      history: sohbet([
+        ["selam", "Uzun zamandır yoktun."],
+        ["evet işler çok yoğundu hiç giremedim", null],
+      ]),
+    },
+    bekle: {
+      // Kayıt mazereti DOĞRULUYOR (girmemiş). Koç burada sıkıştırırsa haksızlık
+      // eder — çelişki satırı zaten üretilmedi. Aynı denetimlerin bu vakada
+      // GEÇMESİ, koçun veriyi körü körüne silah olarak kullanmadığını gösterir.
+      suclamasin: true,
+      planaDeginsin: true,
+      tekSoru: true,
+    },
+  },
 ];

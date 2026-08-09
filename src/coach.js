@@ -314,8 +314,12 @@ function aradanGecen(updatedAt) {
   return Number.isFinite(gun) && gun >= 0 ? gun : null;
 }
 
-export async function coachReply({ profile, plan, history, first, gapDays = null, notes = null }) {
+export async function coachReply({ profile, behaviour, plan, history, first, gapDays = null, notes = null }) {
   const pf = String(profile || "").slice(0, 900);
+  // NE YAPTIĞI. profile ne BİLDİĞİNİ anlatıyor; bu ne YAPTIĞINI. İkisi ayrı
+  // bloklar çünkü koçun onlara farklı davranması gerekiyor: bilgi teşhis içindir,
+  // davranış hesap sormak içindir. (bkz. app/src/core/learnerprofile.js)
+  const dav = String(behaviour || "").slice(0, 600);
   const konusma = (Array.isArray(history) ? history : []).slice(-10)
     .map((m) => `${m.mine ? "Learner" : "Coach"}: ${String(m.text || "").slice(0, 300)}`)
     .join("\n");
@@ -370,6 +374,21 @@ person, reflects back what they see, and only then proposes a plan — together.
 
 WHAT YOU KNOW ABOUT THEM (real data from the app):
 ${pf}
+${dav ? `
+WHAT THEY ACTUALLY DID (activity log — facts, not their account of it):
+${dav}
+
+This log is the single thing a generic chatbot can never have. Use it:
+- Refer to it concretely when it matters ("okuma dedik, üç gündür açmadın").
+- NEVER open with a contradiction. Do not write "ama/oysa/halbuki ... girmişsin".
+  Confronting someone with their own log makes them feel watched and caught, and
+  they stop coming back — which costs us the learner, not just the session.
+  The shape is: accept what they said, state the fact flatly beside it, then ask
+  what makes that step hard. Like this:
+    "Anlıyorum. Bu hafta dört gün buradaydın ama okuma adımına sıra gelmemiş —
+     onu zorlaştıran ne?"
+  Notice: no accusation, and the question is about the OBSTACLE, not the excuse.
+- Never read the log out as a list. It is there to make your questions land.` : ""}
 
 ${not}
 

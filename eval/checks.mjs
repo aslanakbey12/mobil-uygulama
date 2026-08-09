@@ -178,6 +178,41 @@ export function denetle(vaka, cevap) {
     ekle("mevcut plana değiniyor", !!m, m ? m[0] : "plandan hiç söz etmemiş");
   }
 
+  // 5) DAVRANIŞ KAYDINA DEĞİNME.
+  // Elimizdeki tek ayırt edici bilgi bu. Koç "hedefin ne?" diye sorabilen bir
+  // botla aynı şeyi yapıyorsa kaydı vermenin anlamı yok.
+  if (b.davranisaDeginsin) {
+    const kalip = /(gün|geçen sefer|son(un)?da|girmiş|açmadın|açmamış|girmemiş|yapmadın|yapmamış|kaldı|arada|hafta)/i;
+    const m = reply.match(kalip);
+    ekle("davranış kaydına değiniyor", !!m, m ? m[0] : "kayda hiç değinmemiş");
+  }
+
+  // 6) VERİYLE SUÇLAMA.
+  // SINIR BURASI. Davranış kaydını vermek, koçu savcıya dönüştürmek için değil.
+  // "Ama uygulamaya girmişsin" diye yüzüne vurmak, kullanıcıyı utandırır ve
+  // uygulamadan soğutur — bu özelliğin en gerçek riski budur, ve ölçülmezse
+  // fark edilmez.
+  if (b.suclamasin) {
+    // İlk sürüm "ama ... girmişsin" kalıbını arıyordu ve GERÇEK bir suçlamayı
+    // kaçırdı: "Ama uygulamaya 5 gün giriş yapmışsın" — araya "5 gün" girdiği
+    // için eşleşmedi. Suçlama sabit bir kelime dizisi değil, bir YAPI:
+    // karşıtlık bağlacı + hemen ardından uygulamaya girme fiili.
+    const karsitlik = /\b(ama|oysa|halbuki|fakat|ancak|yine de)\b/gi;
+    let ihlal = null;
+    for (const m of reply.matchAll(karsitlik)) {
+      const sonra = reply.slice(m.index, m.index + 70);
+      if (/(gir(di|miş|iş)|açmış|gelmiş|kullanmış|aktif|çalışmış)/i.test(sonra)) {
+        ihlal = `"${sonra.split(/[.!?]/)[0].trim().slice(0, 60)}"`;
+        break;
+      }
+    }
+    if (!ihlal) {
+      const acik = reply.match(/(doğru değil|yalan|bahane|mazeret ür|inandırıcı değil|kendini kandır|aslında vaktin var)/i);
+      if (acik) ihlal = `"${acik[0]}"`;
+    }
+    ekle("veriyle suçlamıyor", !ihlal, ihlal || "");
+  }
+
   // 4) BAĞLAÇLA BİRLEŞTİRİLMİŞ ÇİFT SORU.
   // "X'i VE ne zaman Y olacağını söyler misin?" — tek soru işareti, iki soru.
   // `?` saymak bunu kaçırıyordu. İnsan bu tür bir soruda yalnızca kolay olanı

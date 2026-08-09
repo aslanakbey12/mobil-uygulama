@@ -558,7 +558,7 @@ app.post("/coach/chat", async (req, reply) => {
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük YZ hakkın doldu, yarın tekrar dene." });
   aiquota.bumpAi(userId);
-  const { profile, plan, text } = req.body || {};
+  const { profile, behaviour, plan, text } = req.body || {};
   try {
     // GEÇMİŞ SUNUCUDAN. İstemci artık kendi geçmişini taşımıyor — yalnızca yeni
     // mesajını gönderiyor. Böylece sohbet ekran kapanınca kaybolmuyor, ikinci
@@ -569,7 +569,7 @@ app.post("/coach/chat", async (req, reply) => {
     if (yeni) gecmis.push({ mine: true, text: yeni });
 
     const gapDays = updatedAt ? Math.floor((Date.now() - new Date(updatedAt).getTime()) / 86400000) : null;
-    const out = await coach.coachReply({ profile, plan, history: gecmis, first: !messages.length, gapDays, notes });
+    const out = await coach.coachReply({ profile, behaviour, plan, history: gecmis, first: !messages.length, gapDays, notes });
 
     // Kullanıcının mesajı + koçun cevabı kalıcıya. Hata YUTULMAZ değil ama
     // isteği düşürmez: kaydedilemeyen mesaj hatırlanmaz, cevap yine gider.
