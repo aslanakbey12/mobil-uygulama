@@ -81,9 +81,21 @@ describe("oy sayaçları KALICI", () => {
 });
 
 describe("çıktı bütçesi", () => {
-  test("okuma çıktı tavanı %20 kısıldı (3500 -> 2800)", async () => {
+  // TAVAN BİR ÜCRET DEĞİL — kullanılmayan bütçe para etmiyor. Bu yüzden onu
+  // "tasarruf" diye kısmak yanlış bir sezgiydi: 3500'den 2800'e indirdiğimizde
+  // hiçbir şey kazanmadık, sadece kesilme riskini artırdık.
+  //
+  // Model karşılaştırmasında bu risk gerçekleşti: DeepSeek okuma isteklerinde
+  // 2800'ü iki kez doldurdu, her kesilme tüm model zincirini yeniden tetikledi
+  // ve tek parça için üç çağrı faturalandı. Ölçüm de kirlendi — modeli yavaş
+  // sanmıştım, meğer yeniden denemelermiş.
+  //
+  // Gemini zaten ~750 token kullanıyor; bu tavan ona hiç dokunmuyor.
+  test("okuma çıktı tavanı kesilmeye yer bırakmayacak kadar geniş", async () => {
     const src = await import("node:fs").then((m) => m.readFileSync("src/reading.js", "utf8"));
-    assert.match(src, /maxOutputTokens:\s*2800/, "okuma çıktı tavanı 2800 olmalı");
-    assert.doesNotMatch(src, /maxOutputTokens:\s*3500/, "eski 3500 tavanı kalmamalı");
+    const m = src.match(/maxOutputTokens:\s*(\d+),\s*\n\s*thinkingConfig[^\n]*\n\s*\},\s*\n\s*\};\s*\n\s*\/\/ Model-yedekli/);
+    const tavan = m ? Number(m[1]) : Number((src.match(/maxOutputTokens:\s*(\d{4,})/g) || [])
+      .map((x) => Number(x.replace(/\D/g, ""))).sort((a, b) => b - a)[0]);
+    assert.ok(tavan >= 3500, `okuma tavanı en az 3500 olmalı, bulunan: ${tavan}`);
   });
 });

@@ -513,9 +513,13 @@ export async function generatePassage(level, words, opts = {}) {
     generationConfig: {
       responseMimeType: "application/json",
       temperature: 0.8,
-      // Çıktı tavanı %20 kısıldı (3500 → 2800). Çıktı token'ı faturanın büyük
-      // kısmı; parça + 3 soru + sözlükçe buraya rahat sığıyor.
-      maxOutputTokens: 2800,
+      // TAVAN BİR ÜCRET DEĞİL, kullanılmayan bütçe para etmiyor. Buna karşılık
+      // tavana çarpmak PAHALI: kesik JSON tüm model zincirini yeniden tetikliyor,
+      // yani tek parça için iki-üç çağrı faturalanıyor. DeepSeek karşılaştırmasında
+      // 2800 tavanı iki kez doldu ve ölçümü kirletti — modeli yavaş sanmıştım,
+      // meğer yeniden denemelermiş. Gemini zaten ~750 token kullanıyor, bu tavan
+      // ona hiç dokunmuyor; dar tutmanın tek etkisi kesilme riskiydi.
+      maxOutputTokens: 4000,
       thinkingConfig: { thinkingBudget: 0 }, // düşünme kapalı: hızlı/ucuz
     },
   };
