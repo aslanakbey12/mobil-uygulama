@@ -519,7 +519,7 @@ export async function generatePassage(level, words, opts = {}) {
       // 2800 tavanı iki kez doldu ve ölçümü kirletti — modeli yavaş sanmıştım,
       // meğer yeniden denemelermiş. Gemini zaten ~750 token kullanıyor, bu tavan
       // ona hiç dokunmuyor; dar tutmanın tek etkisi kesilme riskiydi.
-      maxOutputTokens: 4000,
+      maxOutputTokens: 6000,
       thinkingConfig: { thinkingBudget: 0 }, // düşünme kapalı: hızlı/ucuz
     },
   };
@@ -531,7 +531,18 @@ export async function generatePassage(level, words, opts = {}) {
   // dönüş) yeni dağıtım değil, tek değer değişikliği.
   let out;
   try {
-    const txt = await geminiText(body, { timeout: 50000, tries: 2, prefer: READING_MODEL || null });
+    // ZAMAN AŞIMI 50sn DEĞİL 100sn.
+    //
+    // Ölçtük: gemini-flash bu işi ~5 saniyede bitiriyor, deepseek-v4-pro 40-84
+    // saniyede. READING_MODEL DeepSeek'e ayarlıyken 50 saniyelik pay, isteklerin
+    // yaklaşık yarısını boşuna kesiyordu: kullanıcı 50 saniye bekliyor, sonra
+    // yedeğe düşülüyor ve BİR KEZ DAHA bekliyor — iki kat bekleme, iki kat fatura,
+    // ve kesilen çağrının parası da yanıyor.
+    //
+    // Payı açmak Gemini'ye hiç dokunmuyor (zaten 5 saniyede dönüyor); yalnızca
+    // yavaş modelin işini bitirmesine izin veriyor. Yavaşlık sorun olursa çözüm
+    // burayı kısmak değil, READING_MODEL'i geri almak.
+    const txt = await geminiText(body, { timeout: 100000, tries: 2, prefer: READING_MODEL || null });
     const clean = extractJson(txt);
     // Gemini çıktısı token sınırında kesilebilir → JSON yarım kalır (örn. glossary'nin
     // son öğesi eksik). Önce düz parse, olmazsa onar (yarım son öğe atılır, gerisi kurtarılır).
