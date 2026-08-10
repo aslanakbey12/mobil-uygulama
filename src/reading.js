@@ -456,7 +456,25 @@ export async function imageQueryFor(en, tr, definition) {
   if (imgQueryCache.has(key)) return imgQueryCache.get(key);
   if (!KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const prompt = `English word: "${en}" (Turkish meaning: ${String(tr || "").slice(0, 60)}; definition: ${String(definition || "").slice(0, 160)}).
-1) Can this word's meaning be shown CLEARLY in a single photograph? Abstract/function words (although, however, opinion, despite) CANNOT — answer false for those. Concrete nouns, actions and visible qualities CAN.
+1) Can this word's meaning be shown CLEARLY in a single photograph?
+
+APPLY THIS TEST, not a category rule: imagine a learner who does NOT know the word,
+looking only at the photo. Could they arrive at THIS word? If the photo would fit
+twenty other words just as well, the answer is FALSE.
+  "apple" → a photo of an apple. Only one word fits. TRUE.
+  "acquire" → a photo of someone holding something. That also fits hold, buy, carry,
+      own, receive, give. The photo teaches nothing. FALSE.
+  "consider" → a photo of someone with a hand on their chin. That fits think, worry,
+      wonder, remember, doubt. FALSE.
+  "various" → you cannot photograph a quantifier. FALSE.
+Mental states, cognition and possession verbs (consider, acquire, tend, seem, matter),
+quantifiers and degree words (various, certain, rather, quite), and connectives
+(although, however, despite) are ALWAYS false.
+Concrete nouns, physically visible actions (swimming, climbing) and visible qualities
+(crowded, rusty, empty) are true.
+
+A wrong TRUE is much worse than a wrong FALSE: a wrong TRUE puts an unrelated stock
+photo in front of the learner and teaches them something false. When unsure, answer FALSE.
 2) If yes, give the BEST English photo-stock search query (2-4 words) that returns a photo unmistakably showing THIS meaning. Disambiguate polysemous words using the definition (e.g. "bank" money -> "bank teller counter"; "spring" season -> "spring blossom field").
 Return ONLY JSON: {"depictable": boolean, "query": string}`;
   const body = {
