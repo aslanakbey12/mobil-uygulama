@@ -90,6 +90,48 @@ async function loadPrevStats(userId, wk) {
   } catch (_) { return null; }
 }
 
+// SON HAFTALARIN RAKAMLARI — beceri grafiği ve trend çizgisi için.
+// İstemci tek haftanın verisine sahip; geçmişi sunucu tutuyor (coach_reports).
+export async function loadHistory(userId, wk, n = 8) {
+  const db = supa();
+  if (!db || !userId) return [];
+  try {
+    const { data, error } = await db.from("coach_reports")
+      .select("week, stats").eq("user_id", userId).lte("week", wk)
+      .order("week", { ascending: false }).limit(n);
+    if (error || !Array.isArray(data)) return [];
+    return data.filter((r) => r.stats).map((r) => ({ week: r.week, stats: r.stats })).reverse();
+  } catch (_) { return []; }
+}
+
+// AKRAN KIYASI — aynı seviyedeki kullanıcıların ortalaması.
+//
+// ASGARİ GRUP ŞARTI kritik ve iki sebebi var. Küçük grupta ortalama gürültüdür
+// (üç kişilik "ortalama" hiçbir şey söylemez), ve daha önemlisi GİZLİLİK: az
+// kişilik bir havuzda kullanıcı kendi katkısını çıkarıp diğerini tahmin
+// edebilir. Eşiğin altında bu blok HİÇ üretilmiyor — özellik kullanıcı sayısı
+// büyüyene kadar kendiliğinden kapalı kalır.
+const AKRAN_ESIK = 30;
+
+export async function loadPeer(wk, level) {
+  const db = supa();
+  if (!db || !level) return null;
+  try {
+    const { data, error } = await db.from("coach_reports")
+      .select("stats").eq("week", wk).limit(500);
+    if (error || !Array.isArray(data)) return null;
+    const ayni = data
+      .map((r) => r.stats)
+      .filter((s) => s && s.level === level && Number.isFinite(Number(s.activeDays)));
+    if (ayni.length < AKRAN_ESIK) return null;
+    const ort = (alan) => {
+      const v = ayni.map((s) => Number(s[alan]) || 0);
+      return Math.round(v.reduce((t, x) => t + x, 0) / v.length);
+    };
+    return { n: ayni.length, activeDays: ort("activeDays"), learned: ort("learnedThisWeek") };
+  } catch (_) { return null; }
+}
+
 // Profil özeti + haftanın rakamlarından rapor üret.
 //
 // GÜVENLİK: `profile` istemciden geliyor ama SERBEST METİN DEĞİL — istemci onu
@@ -536,10 +578,19 @@ Set "plan" ONLY at the PLAN stage, and only once the goal is genuinely clear. Ot
 // Uçtan uca: kayıtlı varsa onu ver, yoksa üret + kaydet.
 export async function getOrCreateReport(userId, { profile, stats, behaviour }) {
   const wk = weekKey();
+  // GEÇMİŞ VE AKRAN her zaman taze getiriliyor — rapor önbellekten gelse bile.
+  // Rapor metni hafta boyunca sabit kalmalı (yoksa kullanıcı her açtığında
+  // farklı bir "plan" görür), ama grafik ve akran ortalaması sabit kalmak
+  // zorunda değil; onları dondurmak kullanıcıya eski veriyi göstermek olurdu.
+  const [history, peer] = await Promise.all([
+    loadHistory(userId, wk),
+    loadPeer(wk, stats?.level),
+  ]);
   const kayitli = await loadReport(userId, wk);
-  if (kayitli) return { report: kayitli, week: wk, cached: true };
+  if (kayitli) return { report: kayitli, week: wk, cached: true, history, peer };
   const prev = await loadPrevStats(userId, wk);
   const report = await weeklyReport({ profile, stats, prev, behaviour });
   await saveReport(userId, wk, report, stats);
-  return { report, week: wk, cached: false };
+  // Bu haftanın kaydı yeni yazıldı; grafikte de görünsün.
+  return { report, week: wk, cached: false, history: [...history.filter((h) => h.week !== wk), { week: wk, stats }], peer };
 }
