@@ -63,12 +63,31 @@ export async function loadReport(userId, wk) {
   } catch (_) { return null; }
 }
 
-async function saveReport(userId, wk, report) {
+// Raporu VE dayandığı rakamları sakla. Rakamlar olmadan gelecek hafta
+// karşılaştırma yapılamıyordu (bkz. db/19_report_stats.sql).
+async function saveReport(userId, wk, report, stats) {
   const db = supa();
   if (!db || !userId) return;
   try {
-    await db.from("coach_reports").upsert({ user_id: userId, week: wk, report, created_at: new Date().toISOString() });
+    await db.from("coach_reports").upsert({ user_id: userId, week: wk, report, stats: stats || null, created_at: new Date().toISOString() });
   } catch (_) { /* yazamamak raporu geçersiz kılmaz — sadece haftaya yeniden üretilir */ }
+}
+
+// ÖNCEKİ haftanın rakamları. "Bir önceki hafta" değil "bundan önceki EN SON
+// rapor": kullanıcı bir hafta hiç girmemişse o hafta rapor da üretilmemiştir ve
+// katı bir "geçen pazartesi" sorgusu boş döner. Kıyas kaybolacağına iki hafta
+// öncesiyle yapılsın — koç kaç hafta önce olduğunu da söyleyebilsin diye
+// haftayı birlikte döndürüyoruz.
+async function loadPrevStats(userId, wk) {
+  const db = supa();
+  if (!db || !userId) return null;
+  try {
+    const { data, error } = await db.from("coach_reports")
+      .select("week, stats").eq("user_id", userId).lt("week", wk)
+      .order("week", { ascending: false }).limit(1).maybeSingle();
+    if (error || !data?.stats) return null;
+    return { week: data.week, stats: data.stats };
+  } catch (_) { return null; }
 }
 
 // Profil özeti + haftanın rakamlarından rapor üret.
@@ -77,9 +96,30 @@ async function saveReport(userId, wk, report) {
 // sabit listelerden üretiyor (core/learnerprofile.js) ve kimlik bilgisi içermiyor.
 // Yine de burada uzunluk kırpması yapıyoruz: şişmiş bir profil hem maliyeti
 // artırır hem de istemin geri kalanını bastırabilir.
-export async function weeklyReport({ profile, stats }) {
+export async function weeklyReport({ profile, stats, prev = null, behaviour = "" }) {
   const pf = String(profile || "").slice(0, 900);
   const s = stats || {};
+  const dav = String(behaviour || "").slice(0, 500);
+
+  // GEÇEN HAFTAYLA KIYAS. İnsanı hareket ettiren şey mutlak sayı değil YÖN.
+  // "40 kelime öğrendin" tek başına bir şey ifade etmiyor; "geçen hafta 25'ti"
+  // eklendiğinde cümle bambaşka oluyor. Gerileme için daha da önemli: kullanıcı
+  // yavaşladığını kendisi fark etmez, koçun söylemesi gerekir.
+  //
+  // İLK HAFTA BLOK HİÇ KONULMUYOR — kıyaslanacak veri yokken model uydurur ve
+  // "geçen haftaya göre daha iyisin" gibi asılsız bir cümle güveni yıkar.
+  const p = prev?.stats;
+  const kiyas = p ? [
+    "",
+    `LAST REPORT (week of ${prev.week}) — compare against it:`,
+    `  words learned: ${Number(p.learnedThisWeek) || 0}  (now ${Number(s.learnedThisWeek) || 0})`,
+    `  study days: ${Number(p.activeDays) || 0}/7  (now ${Number(s.activeDays) || 0}/7)`,
+    `  words slipped back: ${Number(p.lapsedThisWeek) || 0}  (now ${Number(s.lapsedThisWeek) || 0})`,
+    `  text coverage: ${Number(p.coverage) || 0}%  (now ${Number(s.coverage) || 0}%)`,
+    'You MUST fill the "trend" field using these numbers. Do not flatter: if they',
+    "slowed down, say so plainly and make that the gap.",
+  ].join("\n") : "";
+
   const sayilar = [
     `words learned this week: ${Number(s.learnedThisWeek) || 0}`,
     `words that slipped back: ${Number(s.lapsedThisWeek) || 0}`,
@@ -100,14 +140,25 @@ ${pf}
 
 THIS WEEK:
 ${sayilar}
-
+${kiyas}
+${dav ? `\nWHAT THEY ACTUALLY DID (activity log):\n${dav}\n` : ""}
 Write in TURKISH. Return ONLY JSON:
 {
   "headline": "one sentence, max 12 words, what this week really was",
+  "trend": ${p
+    ? '"ONE sentence comparing THIS week to the last report, naming BOTH numbers (e.g. \'Geçen hafta 25 kelime, bu hafta 40.\'). Required."'
+    : '"" (no earlier report exists — leave it EMPTY and never imply a direction: do not write \'düştü\', \'arttı\', \'yavaşladın\'. You have nothing to compare against and guessing would be a lie about their own data.)'},
   "win": "one specific thing they did well (reference a real number)",
   "gap": "the ONE thing holding them back most, stated plainly and kindly",
-  "plan": ["3 concrete actions for next week, each max 10 words, imperative"]
+  "plan": ["3 concrete actions for next week, each max 10 words, imperative"],
+  "actions": [ { "kind": "one of the kinds below", "label": "Turkish button text, max 5 words" } ]
 }
+
+ACTIONS — the report must not end as text they merely read.
+Give 1-3 actions that start the plan you just wrote. Use ONLY these kinds:
+${Object.entries(ACTIONS).map(([k, v]) => `  ${k} — ${v}`).join("\n")}
+Pick the ones that actually match your "plan" items. A plan nobody can start is
+advice, not coaching.
 Rules: no empty encouragement. If the numbers are weak, say so gently but clearly.
 Reference their actual weak words or skill gap when relevant. Speak to them as "sen".
 If they have a goal and a plan, ALWAYS mention how far they got with it — that is
@@ -116,7 +167,7 @@ but do not pretend it did not happen.`;
 
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.6, maxOutputTokens: 2500, thinkingConfig: { thinkingBudget: 0 } },
+    generationConfig: { responseMimeType: "application/json", temperature: 0.6, maxOutputTokens: 4000, thinkingConfig: { thinkingBudget: 0 } },
   };
   // MODELİ SABİTLE. Rapor `prefer` kullanmıyordu, yani zincirin YAPIŞKAN modeline
   // düşüyordu: koç sohbeti pro'yu ısıttığı anda haftalık rapor da pro'da çalışıyor
@@ -129,9 +180,16 @@ but do not pretend it did not happen.`;
   // tasarımı bozar. Modele güvenip doğrudan göstermek, kontrolü ona vermek olur.
   return {
     headline: String(parsed.headline || "").slice(0, 120),
+    // Kıyas verisi yokken model yön UYDURMASIN diye burada da kesiyoruz:
+    // istemde "boş bırak" yazsa da tek savunma istem olmamalı.
+    trend: prev?.stats ? String(parsed.trend || "").slice(0, 200) : "",
     win: String(parsed.win || "").slice(0, 300),
     gap: String(parsed.gap || "").slice(0, 300),
     plan: (Array.isArray(parsed.plan) ? parsed.plan : []).slice(0, 3).map((x) => String(x).slice(0, 120)),
+    // AYNI BEYAZ LİSTE. Model buradan başka bir eylem uyduramaz — koç sohbetinde
+    // olduğu gibi, modelin ürettiği metin navigasyona dönüşüyorsa doğrulanmadan
+    // kullanılamaz. sanitizeActions bilinmeyen türü sessizce düşürür.
+    actions: sanitizeActions(parsed.actions),
   };
 }
 
@@ -461,11 +519,12 @@ Set "plan" ONLY at the PLAN stage, and only once the goal is genuinely clear. Ot
 }
 
 // Uçtan uca: kayıtlı varsa onu ver, yoksa üret + kaydet.
-export async function getOrCreateReport(userId, { profile, stats }) {
+export async function getOrCreateReport(userId, { profile, stats, behaviour }) {
   const wk = weekKey();
   const kayitli = await loadReport(userId, wk);
   if (kayitli) return { report: kayitli, week: wk, cached: true };
-  const report = await weeklyReport({ profile, stats });
-  await saveReport(userId, wk, report);
+  const prev = await loadPrevStats(userId, wk);
+  const report = await weeklyReport({ profile, stats, prev, behaviour });
+  await saveReport(userId, wk, report, stats);
   return { report, week: wk, cached: false };
 }

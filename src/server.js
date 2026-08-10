@@ -514,9 +514,9 @@ app.post("/coach/weekly", async (req, reply) => {
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!coach.coachConfigured()) return reply.code(503).send({ error: "Koç raporu yakında." });
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
-  const { profile, stats } = req.body || {};
+  const { profile, stats, behaviour } = req.body || {};
   try {
-    const out = await coach.getOrCreateReport(userId, { profile, stats });
+    const out = await coach.getOrCreateReport(userId, { profile, stats, behaviour });
     // Kota SADECE gerçekten üretim yapıldıysa harcanır. Önbellekten dönen rapor
     // hiçbir YZ çağrısı yapmıyor; onu da saymak kullanıcıyı kendi raporuna
     // bakmaktan caydırırdı.
