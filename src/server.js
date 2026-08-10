@@ -2,6 +2,7 @@
 // Kimlik: Supabase JWT (üretim) ya da dev yedeği (userId body/query/header).
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
+import { originIzinli } from "./cors.js";
 import * as mm from "./matchmaking.js";
 import * as mod from "./moderation.js";
 import * as sockets from "./sockets.js";
@@ -298,15 +299,31 @@ app.register(async function (appWs) {
 
 // CORS. Üretimde CORS_ORIGINS env'iyle origin kısıtlanır (ör. Netlify web adresi);
 // ayarlanmazsa "*" (mobil uygulama zaten Origin başlığı göndermez).
+// Joker alt alan ("https://*.netlify.app") destekli — eşleştirme kuralları ve
+// gerekçesi cors.js'te.
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || "*").split(",").map((s) => s.trim()).filter(Boolean);
+const REDDEDILEN = new Set();
 app.addHook("onRequest", async (req, reply) => {
   const origin = req.headers.origin;
   let allow = "*";
   if (!CORS_ORIGINS.includes("*")) {
-    allow = origin && CORS_ORIGINS.includes(origin) ? origin : CORS_ORIGINS[0];
     reply.header("Vary", "Origin");
+    if (!origin) {
+      allow = CORS_ORIGINS[0];            // mobil: Origin yok, başlık zaten önemsiz
+    } else if (originIzinli(CORS_ORIGINS, origin)) {
+      allow = origin;
+    } else {
+      // BAŞKA BİR ORIGIN YANSITMIYORUZ. Eski kod listenin ilk adresini
+      // döndürüyordu; tarayıcı yine engelliyor ama yanıt geçerli görünüyor ve
+      // arıza "CORS" yerine "ağ hatası" gibi okunuyordu.
+      allow = "";
+      if (!REDDEDILEN.has(origin)) {
+        REDDEDILEN.add(origin);
+        app.log.warn(`CORS reddedildi: ${origin} — izinliler: ${CORS_ORIGINS.join(", ")}`);
+      }
+    }
   }
-  reply.header("Access-Control-Allow-Origin", allow);
+  if (allow) reply.header("Access-Control-Allow-Origin", allow);
   reply.header("Access-Control-Allow-Headers", "content-type,authorization,x-user-id");
   reply.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   if (req.method === "OPTIONS") { reply.code(204).send(); return; }
