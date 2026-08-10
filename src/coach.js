@@ -128,6 +128,16 @@ export async function weeklyReport({ profile, stats, prev = null, behaviour = ""
     // PLAN İLERLEMESİ — döngüyü kapatan bilgi. Rapor, koçun verdiği planın ne
     // kadarının yapıldığını görmezse "geçen hafta konuştuklarımız ne oldu"
     // sorusu cevapsız kalır ve plan ciddiyetini kaybeder.
+    // GERİLEYEN KELİMELERİN ADLARI. Sayı ("9 kelime geriledi") bir ölçüm;
+    // adlar bir TEŞHİS imkânı — koç ortak yanı görüp adlandırabilir ("üçü de
+    // soyut fiil"). Sayı hiçbir şey yaptırmıyor, ad yaptırıyor.
+    Array.isArray(s.lapsedWords) && s.lapsedWords.length
+      ? `which words slipped (most-forgotten first): ${s.lapsedWords.slice(0, 6).map((w) => String(w).slice(0, 24)).join(", ")}`
+      : "",
+    // GÜN DESENİ. "2/7 gün" dağınık mı hafta sonuna mı yığılmış, göstermiyor.
+    // Desen görünce koç somut bir şey önerebilir; sayı görünce ancak "daha çok
+    // çalış" diyebilir ki bu tavsiye değil temenni.
+    s.dayPattern ? `daily activity, oldest to newest: ${String(s.dayPattern).slice(0, 120)}` : "",
     s.planGoal ? `their goal: "${String(s.planGoal).slice(0, 80)}"` : "no goal set yet",
     s.planTotal ? `plan steps completed: ${Number(s.planDone) || 0}/${Number(s.planTotal)}` : "",
   ].filter(Boolean).join("\n");
@@ -160,6 +170,11 @@ ${Object.entries(ACTIONS).map(([k, v]) => `  ${k} — ${v}`).join("\n")}
 Pick the ones that actually match your "plan" items. A plan nobody can start is
 advice, not coaching.
 Rules: no empty encouragement. If the numbers are weak, say so gently but clearly.
+If you were given the words that slipped, NAME them and say what they have in
+common if anything — that is a diagnosis, and a count is not.
+If the daily activity pattern shows where their week actually goes (all weekend,
+nothing on weekdays, a long gap), say it and let your plan work WITH that pattern
+instead of asking them to become a different person.
 Reference their actual weak words or skill gap when relevant. Speak to them as "sen".
 If they have a goal and a plan, ALWAYS mention how far they got with it — that is
 the whole point of having a coach. If they did none of the plan, say it kindly
