@@ -103,14 +103,27 @@ export function fallbackReply(words, seed = 0) {
 
 // Sohbet sonrası "ders özeti": öğrencinin mesajlarından kullanılan hedef kelimeler +
 // nazik düzeltmeler (max 3) + kısa Türkçe övgü. Sohbeti gerçek bir derse çevirir.
-export async function generateRecap(messages, words, level) {
+export async function generateRecap(messages, words, level, tasks = []) {
   const lvl = ["A1", "A2", "B1", "B2", "C1", "C2"].includes(level) ? level : "B1";
   const ws = (words || []).slice(0, 4).join(", ");
+  // GÖREVLER — senaryo modunda kullanıcı bir HEDEFLE giriyor ve değerlendirme
+  // ona karşı yapılmalı. Görevsiz özet "genel geri bildirim"dir; kullanıcı iyi
+  // mi yaptı kötü mü, ölçüsü olmaz.
+  const gorev = (Array.isArray(tasks) ? tasks : []).slice(0, 4)
+    .map((t) => ({ id: String(t?.id || "").slice(0, 24), en: String(t?.en || "").slice(0, 120) }))
+    .filter((t) => t.id && t.en);
   const convo = (messages || []).slice(-16).map((m) => `${m.mine ? "Learner" : "Partner"}: ${String(m.text || "").slice(0, 200)}`).join("\n");
   const prompt = `You are a supportive English teacher. Below is a practice chat between a Turkish learner (CEFR ${lvl}) and a partner.
 Focus words: ${ws || "-"}.
 Analyze ONLY the Learner's messages. Return ONLY valid JSON:
-{"used": [focus words the learner actually used, base forms],
+${gorev.length ? `
+The learner entered this roleplay with concrete TASKS. Judge each one from their
+messages only. "done" is true ONLY if they actually did it in English — intending
+to, or the partner doing it for them, does not count.
+TASKS:
+${gorev.map((t) => `  ${t.id}: ${t.en}`).join("\n")}
+` : ""}{"used": [focus words the learner actually used, base forms],
+ ${gorev.length ? '"tasks": [{"id": "task id", "done": true or false, "note": "çok kısa Türkçe: nasıl yaptı ya da ne eksik"}],' : ""}
  "corrections": [{"you": "learner's original phrase", "better": "corrected, natural version", "note": "çok kısa Türkçe açıklama"}],
  "praise": "one short encouraging sentence in Turkish"}
 Rules: corrections max 3 and ONLY real mistakes (empty array if none); notes very short; be kind, never condescending.
@@ -121,6 +134,13 @@ ${convo}`;
   const parsed = JSON.parse(extractJson(txt));
   return {
     used: Array.isArray(parsed.used) ? parsed.used.map(String).slice(0, 6) : [],
+    // GÖREV SONUÇLARI istemciden gelen listeye göre DOĞRULANIYOR: model
+    // olmayan bir görev uydurursa ya da birini atlarsa, arayüz eksik/fazla
+    // satır çizerdi. Kaynak liste istemcide sabit; burada ona hizalanıyor.
+    tasks: gorev.map((t) => {
+      const bulunan = (Array.isArray(parsed.tasks) ? parsed.tasks : []).find((x) => String(x?.id || "") === t.id);
+      return { id: t.id, done: !!bulunan?.done, note: String(bulunan?.note || "").slice(0, 120) };
+    }),
     corrections: (Array.isArray(parsed.corrections) ? parsed.corrections : []).slice(0, 3).map((c) => ({
       you: String(c.you || "").slice(0, 160),
       better: String(c.better || "").slice(0, 160),

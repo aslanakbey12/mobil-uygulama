@@ -803,14 +803,14 @@ app.post("/chat/recap", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!chatAI.chatConfigured()) return { recap: null };
-  const { messages, words, level } = req.body || {};
+  const { messages, words, level, tasks } = req.body || {};
   const msgs = Array.isArray(messages) ? messages.slice(-20) : [];
   if (!msgs.some((m) => m && m.mine)) return { recap: null }; // öğrenci hiç yazmamış
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return { recap: null };    // günlük AI kotası doldu → sessizce geç
   aiquota.bumpAi(userId);
   try {
-    const recap = await chatAI.generateRecap(msgs, Array.isArray(words) ? words : [], String(level || "B1"));
+    const recap = await chatAI.generateRecap(msgs, Array.isArray(words) ? words : [], String(level || "B1"), Array.isArray(tasks) ? tasks : []);
     return { recap };
   } catch (e) {
     return { recap: null }; // özet üretilemedi → çıkışı bloklama, sessizce geç
