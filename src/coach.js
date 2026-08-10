@@ -447,8 +447,33 @@ export async function coachReply({ profile, behaviour, plan, history, first, gap
   // saçma." Haklıydı — eski istem "3-5 mesajda yönlendir" diyordu ve model bunu
   // "hemen yönlendir" diye uyguluyordu. Gerçek bir koç önce ANLAR, sonra yönlendirir.
   const hepsi = Array.isArray(history) ? history : [];
-  const tur = hepsi.filter((m) => m.mine).length;
+  // AŞAMA OTURUMA GÖRE, TOPLAM GEÇMİŞE GÖRE DEĞİL.
+  //
+  // Önce aşama o güne kadarki TÜM kullanıcı mesajlarından hesaplanıyordu ve iki
+  // yönde birden bozuktu:
+  //   - 5 mesajı geçen kullanıcı KALICI olarak PLAN aşamasında kalıyordu. Altı ay
+  //     sonra yeni bir hedefle gelse ("artık iş değil, sınav için lazım") koç
+  //     dinlemeye dönemiyor, doğrudan plan yapmaya geçiyordu. Gerçek bir koç yeni
+  //     bir hedef duyunca yeniden dinlemeye başlar.
+  //   - Tersi de vardı: az mesajlı ama PLANI OLAN kullanıcıda aşama ANLAMA çıkıyor
+  //     ve o aşamada eylem vermek yasak; koç tam gereken anda butonu koyamıyordu.
+  //
+  // Oturum sınırı: son mesajdan 6 saatten uzun bir boşluk. Damga yoksa (eski
+  // kayıtlar) tüm geçmiş tek oturum sayılır — eski davranış, sessiz bozulma yok.
+  const OTURUM_ARASI = 6 * 3600 * 1000;
+  let baslangic = 0;
+  for (let i = hepsi.length - 1; i > 0; i--) {
+    const a = Date.parse(hepsi[i]?.at || "");
+    const b = Date.parse(hepsi[i - 1]?.at || "");
+    if (Number.isFinite(a) && Number.isFinite(b) && a - b > OTURUM_ARASI) { baslangic = i; break; }
+  }
+  const oturum = hepsi.slice(baslangic);
+  const tur = oturum.filter((m) => m.mine).length;
   const asama = tur === 0 ? "TANIŞMA" : tur < 3 ? "ANLAMA" : tur < 5 ? "TEŞHİS" : "PLAN";
+  // PLANI OLAN kullanıcıda erken aşamalarda da eylem serbest. Plan zaten üzerinde
+  // anlaşılmış bir taahhüt; "önce dinle" kuralı yeni tanışmak için var, hatırlatma
+  // için değil. Aksi halde koç "okuma adımın bekliyor" deyip butonu koyamıyordu.
+  const planVar = !!plan?.goal && (plan.steps || []).some((s) => !s.done);
 
   // GEÇMİŞ SEANSLAR. Koç yalnızca son 10 mesajı görmemeli — o kadarı "bu
   // seansta ne konuştuk" demek. Daha eskisi "seni tanıyorum" demek, ve bir koçu
@@ -520,7 +545,7 @@ Then ask ONE open question about what they want from English.
 DO NOT suggest any action yet. DO NOT return any actions. This is hello.`)
   : asama === "ANLAMA" ? `Keep listening. Ask about their goal, deadline, where they use English,
 what they find hardest. React to what they actually said — do not change the subject.
-Still NO actions. You are building understanding.`
+${planVar ? "They already have a plan with unfinished steps: you MAY offer ONE action for the next step. The plan is an agreement you both made; ignoring it while asking questions makes it look forgotten. This permission does NOT soften anything else: if they just gave you an excuse, the notes rule still applies — accept it in one clause, then ask for a specific commitment (a day, a time, or one small step)." : "Still NO actions. You are building understanding."}`
   : asama === "TEŞHİS" ? `Now reflect: tell them what you see in their data and connect it to what
 they told you. Be specific ("kelimeleri tanıyorsun ama kuramıyorsun" style). Ask whether
 this matches how they feel. You may offer AT MOST 1 action if it fits naturally.`

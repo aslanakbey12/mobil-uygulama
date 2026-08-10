@@ -564,7 +564,9 @@ app.post("/coach/chat", async (req, reply) => {
     // mesajını gönderiyor. Böylece sohbet ekran kapanınca kaybolmuyor, ikinci
     // cihazda da sürüyor, ve kalitesi görülebiliyor.
     const { messages, updatedAt, notes, noteMark } = await coach.loadChat(userId);
-    const gecmis = messages.map((m) => ({ mine: m.m === 1, text: m.t }));
+    // Zaman damgası TAŞINIYOR: aşama hesabı oturuma göre yapılıyor ve oturum
+    // sınırını bulmak için mesajların ne zaman yazıldığını bilmek gerekiyor.
+    const gecmis = messages.map((m) => ({ mine: m.m === 1, text: m.t, at: m.at }));
     const yeni = String(text || "").slice(0, 1000).trim();
     if (yeni) gecmis.push({ mine: true, text: yeni });
 
