@@ -7,7 +7,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-const { weekKey, raporHaftasi, ACTIONS, notesDue } = await import("../src/coach.js");
+const { weekKey, raporHaftasi, sozGecerli, ACTIONS, notesDue } = await import("../src/coach.js");
 
 // RAPORUN HAFTASI = BİTMİŞ hafta.
 //
@@ -133,5 +133,51 @@ describe("koç notları — güncelleme eşiği", () => {
     assert.equal(notesDue(6, null), true);
     assert.equal(notesDue(6, undefined), true);
     assert.equal(notesDue(3, "abc"), false);
+  });
+});
+
+// ── KOÇ KENDİ SÖZÜNÜ TAKİP EDİYOR ──────────────────────────────────────────
+//
+// Rapor her hafta sıfırdan konuşuyordu: ürettiği plan ertesi hafta kimsenin
+// sormadığı bir öneriye dönüşüyordu. Artık geçen haftanın adımları ve hangisinin
+// yapıldığı isteme giriyor.
+//
+// AMA YANLIŞ HAFTANIN PLANI ASLA KULLANILMAMALI. Uygulamayı üç hafta açmayan
+// birine eski bir planı "geçen hafta sana söylemiştim" diye okumak, koçun hiç
+// konuşmamasından kötü: kullanıcı hatırlamadığı bir sözle suçlanmış olur.
+describe("geçen haftanın planı geçerli mi", () => {
+  const adim = (label, done = false) => ({ kind: "reading", label, done });
+
+  test("tam 7 gün önceki damga geçerli", () => {
+    // raporHaftasi() bugüne göre hesaplanıyor; beklenen damga onun bir öncesi.
+    const rapor = raporHaftasi();
+    const onceki = weekKey(new Date(Date.parse(rapor + "T00:00:00Z") - 7 * 86400000));
+    const stats = { prevPlan: { week: onceki, steps: [adim("Bir parça oku")] } };
+    assert.equal(sozGecerli(null, stats), true);
+  });
+
+  test("ESKİ bir plan reddedilir", () => {
+    const rapor = raporHaftasi();
+    const cokEski = weekKey(new Date(Date.parse(rapor + "T00:00:00Z") - 28 * 86400000));
+    assert.equal(sozGecerli(null, { prevPlan: { week: cokEski, steps: [adim("Oku")] } }), false);
+  });
+
+  test("raporlanan haftanın kendi damgası da reddedilir", () => {
+    // Bu plan raporlanan hafta İÇİN değil, ondan SONRAKİ hafta için verildi.
+    assert.equal(sozGecerli(null, { prevPlan: { week: raporHaftasi(), steps: [adim("Oku")] } }), false);
+  });
+
+  test("plan yoksa, boşsa ya da etiketsizse geçersiz", () => {
+    const rapor = raporHaftasi();
+    const onceki = weekKey(new Date(Date.parse(rapor + "T00:00:00Z") - 7 * 86400000));
+    assert.equal(sozGecerli(null, {}), false);
+    assert.equal(sozGecerli(null, { prevPlan: { week: onceki, steps: [] } }), false);
+    assert.equal(sozGecerli(null, { prevPlan: { week: onceki, steps: [{ kind: "reading" }] } }), false);
+    assert.equal(sozGecerli(null, { prevPlan: { steps: [adim("Oku")] } }), false);
+  });
+
+  test("bozuk girdide çökmez", () => {
+    assert.equal(sozGecerli(null, null), false);
+    assert.equal(sozGecerli(null, { prevPlan: { week: "abc", steps: "dizi değil" } }), false);
   });
 });

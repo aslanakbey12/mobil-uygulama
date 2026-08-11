@@ -119,10 +119,14 @@ export async function loadHistory(userId, wk, n = 8) {
   if (!db || !userId) return [];
   try {
     const { data, error } = await db.from("coach_reports")
-      .select("week, stats").eq("user_id", userId).lte("week", wk)
+      // RAPOR METNİ DE GELİYOR. Haftalarca biriktirip hiç göstermediğimiz veri
+      // buydu: kullanıcı sekiz hafta sonra geriye bakıp "şubatta okuduğumu
+      // anlamıyordum" diyebiliyorsa, ürün onunla bir geçmiş paylaşıyor demektir.
+      // Bırakması zorlaşan şey de bu.
+      .select("week, stats, report").eq("user_id", userId).lte("week", wk)
       .order("week", { ascending: false }).limit(n);
     if (error || !Array.isArray(data)) return [];
-    return data.filter((r) => r.stats).map((r) => ({ week: r.week, stats: r.stats })).reverse();
+    return data.filter((r) => r.stats).map((r) => ({ week: r.week, stats: r.stats, report: r.report || null })).reverse();
   } catch (_) { return []; }
 }
 
@@ -160,6 +164,24 @@ export async function loadPeer(wk, level) {
 // sabit listelerden üretiyor (core/learnerprofile.js) ve kimlik bilgisi içermiyor.
 // Yine de burada uzunluk kırpması yapıyoruz: şişmiş bir profil hem maliyeti
 // artırır hem de istemin geri kalanını bastırabilir.
+// İSTEMCİDEN GELEN PLAN GERÇEKTEN BU HAFTANIN PLANI MI?
+//
+// Zincir şöyle: W haftasının raporu W+1 içinde gösterilir ve o raporun planı
+// W+1 için geçerlidir. Yani W+1'in raporunu yazarken elimizdeki plan, damgası
+// W olan plandır — tam 7 gün önce.
+//
+// Bu kontrol olmadan, uygulamayı üç hafta açmayan birine eski bir planı
+// "geçen hafta sana söylemiştim" diye okuyabilirdik. Hatırlamadığı bir sözle
+// suçlanmak, koçun hiç konuşmamasından kötü.
+export function sozGecerli(prev, stats) {
+  const pp = stats?.prevPlan;
+  if (!pp?.week || !Array.isArray(pp.steps) || !pp.steps.length) return false;
+  if (!pp.steps.every((s) => s && typeof s.label === "string" && s.label.trim())) return false;
+  const rapor = raporHaftasi();
+  const beklenen = weekKey(new Date(Date.parse(rapor + "T00:00:00Z") - 7 * 86400000));
+  return pp.week === beklenen;
+}
+
 export async function weeklyReport({ profile, stats, prev = null, behaviour = "" }) {
   const pf = String(profile || "").slice(0, 900);
   const s = stats || {};
@@ -208,6 +230,31 @@ export async function weeklyReport({ profile, stats, prev = null, behaviour = ""
     s.planTotal ? `plan steps completed: ${Number(s.planDone) || 0}/${Number(s.planTotal)}` : "",
   ].filter(Boolean).join("\n");
 
+  // ── GEÇEN HAFTA NE SÖZ VERİLDİ ──────────────────────────────────────────
+  //
+  // Bir koçu koç yapan tek şey, verdiği sözü hatırlaması ve seni ona karşı
+  // sorumlu tutması. Bu blok olmadan rapor her hafta sıfırdan konuşuyordu:
+  // ürettiği plan ertesi hafta kimsenin sormadığı bir öneriye dönüşüyordu.
+  //
+  // Adımlar İSİMLERİYLE veriliyor, sayı olarak değil. "2/3 tamamlandı" ile
+  // "okuma parçası oku — yapılmadı" arasındaki fark, koçun somut konuşup
+  // konuşamaması.
+  //
+  // DOĞRULAMA ŞART. Plan yalnızca RAPORLANAN haftaya aitse kullanılıyor
+  // (damgası tam 7 gün önceki hafta olmalı). Yanlış haftanın planına
+  // "sana şunu söylemiştim" demek, hiç söylememekten kötü: kullanıcı
+  // hatırlamadığı bir sözle suçlanmış olur ve koça güveni biter.
+  const pp = sozGecerli(prev, stats) ? stats.prevPlan : null;
+  const soz = pp ? [
+    "",
+    "WHAT YOU TOLD THEM TO DO LAST WEEK (your own plan, and what they actually did):",
+    ...pp.steps.map((s) => `  - "${String(s.label).slice(0, 80)}" → ${s.done ? "DONE" : "not done"}`),
+    'You MUST fill "followup": open the report by referring to this plan.',
+    "Name the steps. If they did them, say so and build on it. If they did not,",
+    "say it plainly and without scolding — then adjust. A coach who forgets its own",
+    "instructions is not a coach. Never invent a step that is not listed above.",
+  ].join("\n") : "";
+
   const prompt = `You are a warm, direct English coach for a Turkish learner.
 Write their WEEKLY REPORT. Be specific and honest — never generic praise.
 
@@ -221,10 +268,13 @@ ${pf}
 
 LAST WEEK (completed):
 ${sayilar}
-${kiyas}
+${kiyas}${soz}
 ${dav ? `\nWHAT THEY ACTUALLY DID (activity log):\n${dav}\n` : ""}
 Write in TURKISH. Return ONLY JSON:
 {
+  "followup": ${pp
+    ? '"ONE or TWO sentences checking the plan you gave them last week, naming at least one step. Required."'
+    : '"" (you gave them no plan for this week — leave EMPTY. Never write \'geçen hafta sana demiştim\' when you did not.)'},
   "headline": "one sentence, max 12 words, what this week really was",
   "trend": ${p
     ? '"ONE sentence comparing the reported week to the week before it, naming BOTH numbers (e.g. \'Bir önceki hafta 25 kelime, geçen hafta 40.\'). Required."'
@@ -269,6 +319,10 @@ but do not pretend it did not happen.`;
   // Modelden gelen yapıyı DOĞRULA: eksik alan arayüzü boş bırakır, uzun metin
   // tasarımı bozar. Modele güvenip doğrudan göstermek, kontrolü ona vermek olur.
   return {
+    // Plan verilmemişse takip cümlesi de olamaz. İstemde "boş bırak" yazsa da
+    // tek savunma istem olmamalı: koçun hiç vermediği bir sözü hatırlaması,
+    // uydurmanın en güven kırıcı biçimi.
+    followup: pp ? String(parsed.followup || "").slice(0, 260) : "",
     headline: String(parsed.headline || "").slice(0, 120),
     // Kıyas verisi yokken model yön UYDURMASIN diye burada da kesiyoruz:
     // istemde "boş bırak" yazsa da tek savunma istem olmamalı.
