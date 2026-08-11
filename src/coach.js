@@ -34,7 +34,15 @@ export function parseJson(txt) {
 // ve kilitli bir isim, model emekliye ayrılınca koçu sessizce bozardı.
 const COACH_MODEL = process.env.COACH_MODEL || "gemini-pro-latest";
 // Haftalık rapor için ayrı model — koçun yapışkan modeline düşmesin (bkz. weeklyReport).
-const REPORT_MODEL = process.env.REPORT_MODEL || "gemini-flash-lite-latest";
+//
+// FLASH-LITE'TAN ÇIKARILDI. Ucuz olduğu için seçilmişti ve rapor ücretsiz
+// kullanıcıya da gittiği için hacmi yüksek. Ama ölçülen çıktı kalitesi kabul
+// edilemezdi — ve bu, ürünün ÖDEME ZEMİNİ olan metin. Kullanıcının okuduğu tek
+// "koçluk" cümlesi buysa, orada tasarruf etmek yanlış yerde tasarruftur.
+//
+// Yerine DeepSeek: hem flash-lite'tan ucuz hem çıktısı işe yarıyor (okuma
+// tarafında üç koşuda ölçüldü). Maliyet optimizasyonunun doğru adresi burası.
+const REPORT_MODEL = process.env.REPORT_MODEL || "deepseek/deepseek-v4-pro";
 
 // Haftanın anahtarı (pazartesi). Aynı hafta içinde tekrar istenirse kayıtlı
 // rapor döner — hem maliyet hem tutarlılık için (rapor hafta boyunca değişmemeli,

@@ -64,7 +64,7 @@ const VAKALAR = [
 ];
 
 const { imageQueryFor } = await import("../src/reading.js");
-const model = process.env.UTIL_MODEL || "gemini-flash-lite-latest";
+const model = process.env.UTIL_MODEL || "deepseek/deepseek-v4-pro";
 console.log(`Görsel kararı — ${VAKALAR.length} kelime · model=${model}\n`);
 
 let dogru = 0;

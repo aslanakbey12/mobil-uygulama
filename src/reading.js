@@ -15,7 +15,12 @@ const READING_MODEL = process.env.READING_MODEL || "";
 // ipucu kullanıcıya '", \"Ak k"' gibi bir kırıntı dönüyordu. flash-lite aynı
 // işlerde HİÇ düşünmüyor, doğru çıktı veriyor ve çıktıda 3,6 kat ucuz.
 // Bunlar zaten basit işler; pahalı modelin katkısı yok, zararı vardı.
-export const UTIL_MODEL = process.env.UTIL_MODEL || "gemini-flash-lite-latest";
+// KÜÇÜK YARDIMCI İŞLER (hafıza ipucu vb.). Ucuz olması isteniyor ama flash-lite
+// DEĞİL: ölçtük, çıktısı kullanılamıyordu. Maliyet optimizasyonu için doğru
+// adres DeepSeek — hem daha ucuz hem çıktısı işe yarıyor.
+// OPENROUTER_API_KEY yoksa çağrı düşer ve zincir Gemini'ye geçer, yani
+// yapılandırılmamış bir kurulumda bozulma olmuyor.
+export const UTIL_MODEL = process.env.UTIL_MODEL || "deepseek/deepseek-v4-pro";
 // Günlük okuma üretimi tavanı — KADEMEYE DUYARLI.
 //
 // Eskiden tek sayıydı (20) ve premium'a bakmıyordu. İki ayrı sorun yaratıyordu:
@@ -175,7 +180,14 @@ function modelChain() {
   // ya da OpenRouter'a sormanın anlamı yok: hepsi 404 döner, gerçek hatayı gizler
   // ve ölçümü kirletir (tek işlem için üç çağrı görünür).
   if (activeProvider() !== "gemini") return [MODEL];
-  const chain = [...new Set([MODEL, "gemini-3-flash-preview", "gemini-flash-lite-latest"])];
+  // FLASH-LITE ZİNCİRDEN ÇIKARILDI. Ucuz olduğu için son basamak olarak
+  // duruyordu ama çıktı kalitesi kabul edilemez seviyede: ucuz model, işe
+  // yaramayan çıktı ürettiğinde tasarruf değil israftır — kullanıcı zaten
+  // bir daha o özelliğe dönmüyor.
+  // Yedek artık pro: daha pahalı ama zincirin SONU, yani yalnızca birincil
+  // modeller düştüğünde devreye giriyor. Nadir bir olayın pahalı olması,
+  // sık bir olayın kötü olmasından iyidir.
+  const chain = [...new Set([MODEL, "gemini-3-flash-preview", "gemini-pro-latest"])];
   if (!lastGoodModel) return chain;
   const now = Date.now();
   if (now - lastProbeAt > PROBE_INTERVAL_MS) {   // ara sıra tercih edileni yeniden yokla
@@ -544,9 +556,13 @@ export async function generatePassage(level, words, opts = {}) {
   // Model-yedekli + retry (503'te birincilde birkaç kez, sonra pro-latest yedeğe geçer).
   //
   // READING_MODEL ile okuma için ayrı model seçilebilir. Ayarlanabilir bırakıldı
-  // çünkü okuma faturanın en büyük kalemi ve flash-lite çıktıda 3,6 kat ucuz —
-  // ama kalite kararı ölçümle verilecek. Ayar env'de olunca geçiş (ya da geri
-  // dönüş) yeni dağıtım değil, tek değer değişikliği.
+  // çünkü okuma faturanın en büyük kalemi ve model fiyatları hızla değişiyor;
+  // ayar env'de olunca geçiş (ya da geri dönüş) yeni dağıtım değil, tek değer
+  // değişikliği.
+  // UCUZUN UCUZU DENENDİ VE ELENDİ: flash-lite ölçümde belirgin biçimde daha
+  // ucuzdu ama çıktısı kullanılamıyordu. Ucuz model, işe yaramayan çıktı
+  // ürettiğinde tasarruf değil israftır. Maliyet optimizasyonunun adresi
+  // DeepSeek (üç koşuda okuma kalitesinde Gemini ile başa baş çıktı).
   let out;
   try {
     // ZAMAN AŞIMI 50sn DEĞİL 100sn.
