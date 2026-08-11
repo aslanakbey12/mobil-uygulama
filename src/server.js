@@ -537,7 +537,9 @@ app.post("/coach/weekly", async (req, reply) => {
     // Kota SADECE gerçekten üretim yapıldıysa harcanır. Önbellekten dönen rapor
     // hiçbir YZ çağrısı yapmıyor; onu da saymak kullanıcıyı kendi raporuna
     // bakmaktan caydırırdı.
-    if (!out.cached) aiquota.bumpAi(userId);
+    // `out.report` yoksa hiç üretim yapılmadı (yeni kullanıcı, arkasında
+    // tamamlanmış hafta yok) — kota harcamak yanlış olurdu.
+    if (!out.cached && out.report) aiquota.bumpAi(userId);
     return out;
   } catch (e) {
     return reply.code(502).send({ error: String(e.message || e) });

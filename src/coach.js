@@ -51,6 +51,28 @@ export function weekKey(now = new Date()) {
   return d.toISOString().slice(0, 10);
 }
 
+// RAPORUN HAFTASI = TAMAMLANMIŞ son hafta, içinde bulunulan hafta DEĞİL.
+//
+// Eskiden rapor sürmekte olan haftayı anlatıyordu ve bu iki hatayı birden
+// üretiyordu:
+//
+//   1. Rakamlar hep eksikti. Pazartesi sabahı raporunu açan herkes "bu hafta
+//      hiç çalışmamışsın" değerlendirmesi alıyordu — doğru ama işe yaramaz.
+//   2. Daha kötüsü, rapor hafta anahtarına göre önbelleğe alındığı için o eksik
+//      değerlendirme PAZARA KADAR ekranda kalıyordu. Kullanıcı cuma günü
+//      açtığında üstte "38 yeni kelime" yazarken başlıkta hâlâ "henüz
+//      başlamamışsın" duruyordu. Rapor kendi ekranındaki rakamla çelişiyordu.
+//
+// Ayrıca `trend` alanı donmuş anlık görüntüleri kıyaslıyordu: geçen haftanın
+// perşembe fotoğrafı ile bu haftanın pazartesi fotoğrafı. Model uydurmuyordu,
+// yanlış veriyi biz veriyorduk.
+//
+// Bitmiş hafta hem TAM hem de gerçekten değişmez — yani önbelleğe almak artık
+// bir uzlaşma değil, doğru davranış.
+export function raporHaftasi(now = new Date()) {
+  return weekKey(new Date(new Date(now).getTime() - 7 * 86400000));
+}
+
 // Kayıtlı raporu getir (varsa).
 export async function loadReport(userId, wk) {
   const db = supa();
@@ -153,20 +175,22 @@ export async function weeklyReport({ profile, stats, prev = null, behaviour = ""
   const p = prev?.stats;
   const kiyas = p ? [
     "",
-    `LAST REPORT (week of ${prev.week}) — compare against it:`,
-    `  words learned: ${Number(p.learnedThisWeek) || 0}  (now ${Number(s.learnedThisWeek) || 0})`,
-    `  study days: ${Number(p.activeDays) || 0}/7  (now ${Number(s.activeDays) || 0}/7)`,
-    `  words slipped back: ${Number(p.lapsedThisWeek) || 0}  (now ${Number(s.lapsedThisWeek) || 0})`,
-    `  text coverage: ${Number(p.coverage) || 0}%  (now ${Number(s.coverage) || 0}%)`,
+    `THE WEEK BEFORE (week of ${prev.week}) — compare against it:`,
+    `  words learned: ${Number(p.learnedThisWeek) || 0}  (reported week: ${Number(s.learnedThisWeek) || 0})`,
+    `  study days: ${Number(p.activeDays) || 0}/7  (reported week: ${Number(s.activeDays) || 0}/7)`,
+    `  words slipped back: ${Number(p.lapsedThisWeek) || 0}  (reported week: ${Number(s.lapsedThisWeek) || 0})`,
     'You MUST fill the "trend" field using these numbers. Do not flatter: if they',
     "slowed down, say so plainly and make that the gap.",
   ].join("\n") : "";
 
   const sayilar = [
-    `words learned this week: ${Number(s.learnedThisWeek) || 0}`,
+    `words learned: ${Number(s.learnedThisWeek) || 0}`,
     `words that slipped back: ${Number(s.lapsedThisWeek) || 0}`,
-    `study days this week: ${Number(s.activeDays) || 0}/7`,
-    `text coverage: ~${Number(s.coverage) || 0}%`,
+    `study days: ${Number(s.activeDays) || 0}/7`,
+    // KAPSAM ŞU ANKİ durum, geçen haftanın değil — geriye dönük hesaplanamıyor.
+    // Modele bunu açıkça söylüyoruz, yoksa "geçen hafta %41'e çıkmışsın" gibi
+    // dayanağı olmayan bir cümle kurar.
+    `text coverage RIGHT NOW (not a last-week figure): ~${Number(s.coverage) || 0}%`,
     // PLAN İLERLEMESİ — döngüyü kapatan bilgi. Rapor, koçun verdiği planın ne
     // kadarının yapıldığını görmezse "geçen hafta konuştuklarımız ne oldu"
     // sorusu cevapsız kalır ve plan ciddiyetini kaybeder.
@@ -187,10 +211,15 @@ export async function weeklyReport({ profile, stats, prev = null, behaviour = ""
   const prompt = `You are a warm, direct English coach for a Turkish learner.
 Write their WEEKLY REPORT. Be specific and honest — never generic praise.
 
+The week being reported is FINISHED. Write about it in the past tense ("geçen
+hafta"), never as if it were still running — do not say "bu hafta henüz" or
+suggest they still have time to fix it. The plan you give is for the week they
+are in NOW.
+
 LEARNER PROFILE:
 ${pf}
 
-THIS WEEK:
+LAST WEEK (completed):
 ${sayilar}
 ${kiyas}
 ${dav ? `\nWHAT THEY ACTUALLY DID (activity log):\n${dav}\n` : ""}
@@ -198,19 +227,23 @@ Write in TURKISH. Return ONLY JSON:
 {
   "headline": "one sentence, max 12 words, what this week really was",
   "trend": ${p
-    ? '"ONE sentence comparing THIS week to the last report, naming BOTH numbers (e.g. \'Geçen hafta 25 kelime, bu hafta 40.\'). Required."'
+    ? '"ONE sentence comparing the reported week to the week before it, naming BOTH numbers (e.g. \'Bir önceki hafta 25 kelime, geçen hafta 40.\'). Required."'
     : '"" (no earlier report exists — leave it EMPTY and never imply a direction: do not write \'düştü\', \'arttı\', \'yavaşladın\'. You have nothing to compare against and guessing would be a lie about their own data.)'},
   "win": "one specific thing they did well (reference a real number)",
   "gap": "the ONE thing holding them back most, stated plainly and kindly",
-  "plan": ["3 concrete actions for next week, each max 10 words, imperative"],
-  "actions": [ { "kind": "one of the kinds below", "label": "Turkish button text, max 5 words" } ]
+  "focus": "one word: the skill this week's plan targets",
+  "steps": [ { "kind": "one of the kinds below", "label": "Turkish, imperative, max 6 words" } ]
 }
 
-ACTIONS — the report must not end as text they merely read.
-Give 1-3 actions that start the plan you just wrote. Use ONLY these kinds:
+STEPS — this is the plan, and every step must be startable inside the app.
+Give exactly 3 steps, ordered: the first one is what they should do TODAY.
+Use ONLY these kinds:
 ${Object.entries(ACTIONS).map(([k, v]) => `  ${k} — ${v}`).join("\n")}
-Pick the ones that actually match your "plan" items. A plan nobody can start is
-advice, not coaching.
+
+The plan used to be written twice — once as prose, once as buttons — and the two
+could disagree. Now there is ONE plan and each step is a button. A step nobody
+can press is advice, not coaching, so never describe an action that is not one of
+the kinds above.
 Rules: no empty encouragement. If the numbers are weak, say so gently but clearly.
 If you were given the words that slipped, NAME them and say what they have in
 common if anything — that is a diagnosis, and a count is not.
@@ -242,11 +275,11 @@ but do not pretend it did not happen.`;
     trend: prev?.stats ? String(parsed.trend || "").slice(0, 200) : "",
     win: String(parsed.win || "").slice(0, 300),
     gap: String(parsed.gap || "").slice(0, 300),
-    plan: (Array.isArray(parsed.plan) ? parsed.plan : []).slice(0, 3).map((x) => String(x).slice(0, 120)),
-    // AYNI BEYAZ LİSTE. Model buradan başka bir eylem uyduramaz — koç sohbetinde
-    // olduğu gibi, modelin ürettiği metin navigasyona dönüşüyorsa doğrulanmadan
+    focus: String(parsed.focus || "").slice(0, 20),
+    // TEK PLAN, HER ADIMI BİR EYLEM. Aynı beyaz liste: model buradan başka bir
+    // adım uyduramaz — ürettiği metin navigasyona dönüşüyorsa doğrulanmadan
     // kullanılamaz. sanitizeActions bilinmeyen türü sessizce düşürür.
-    actions: sanitizeActions(parsed.actions),
+    steps: sanitizeActions(parsed.steps),
   };
 }
 
@@ -601,8 +634,11 @@ Set "plan" ONLY at the PLAN stage, and only once the goal is genuinely clear. Ot
 }
 
 // Uçtan uca: kayıtlı varsa onu ver, yoksa üret + kaydet.
+//
+// HAFTA = BİTMİŞ HAFTA (raporHaftasi). İstemci de rakamları o pencere için
+// hesaplıyor; ikisi ayrışırsa rapor yine kendi rakamlarıyla çelişir.
 export async function getOrCreateReport(userId, { profile, stats, behaviour }) {
-  const wk = weekKey();
+  const wk = raporHaftasi();
   // GEÇMİŞ VE AKRAN her zaman taze getiriliyor — rapor önbellekten gelse bile.
   // Rapor metni hafta boyunca sabit kalmalı (yoksa kullanıcı her açtığında
   // farklı bir "plan" görür), ama grafik ve akran ortalaması sabit kalmak
@@ -614,6 +650,22 @@ export async function getOrCreateReport(userId, { profile, stats, behaviour }) {
   const kayitli = await loadReport(userId, wk);
   if (kayitli) return { report: kayitli, week: wk, cached: true, history, peer };
   const prev = await loadPrevStats(userId, wk);
+
+  // HİÇ VERİ YOKSA RAPOR ÜRETME.
+  //
+  // Yeni kullanıcının arkasında tamamlanmış bir hafta yok. O boşluğu bir
+  // raporla doldurmak, hakkında hiçbir şey bilmediğimiz birine "bu hafta şöyle
+  // geçti" demek olur — ürünün tek satmaya çalıştığı şey ONU TANIDIĞIMIZ iken
+  // ilk izlenim uydurma bir değerlendirme olurdu.
+  //
+  // Ama YALNIZCA gerçekten yeni olana. Daha önce raporu olan biri geçen hafta
+  // hiç girmediyse rapor ÜRETİLİYOR: koçun söylemesi gereken şey tam olarak
+  // budur, susmak değil.
+  const bosHafta = !Number(stats?.activeDays) && !Number(stats?.learnedThisWeek);
+  if (bosHafta && !prev) {
+    return { report: null, pending: true, week: wk, cached: false, history, peer };
+  }
+
   const report = await weeklyReport({ profile, stats, prev, behaviour });
   await saveReport(userId, wk, report, stats);
   // Bu haftanın kaydı yeni yazıldı; grafikte de görünsün.

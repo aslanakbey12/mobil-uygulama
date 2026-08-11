@@ -7,7 +7,42 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-const { weekKey, ACTIONS, notesDue } = await import("../src/coach.js");
+const { weekKey, raporHaftasi, ACTIONS, notesDue } = await import("../src/coach.js");
+
+// RAPORUN HAFTASI = BİTMİŞ hafta.
+//
+// Bu ayrımın bedeli gerçekti: rapor sürmekte olan haftayı anlatıyor ve hafta
+// anahtarına göre önbelleğe alınıyordu. Yani pazartesi sabahı raporunu açan
+// kullanıcı "henüz hiç çalışmamışsın" değerlendirmesini alıyor ve o cümle
+// PAZARA KADAR ekranda kalıyordu — üstteki canlı sayaç "38 yeni kelime"
+// derken. Bitmiş haftada böyle bir çelişki mümkün değil, çünkü rakamlar tam.
+describe("raporun haftası", () => {
+  test("içinde bulunulan haftayı DEĞİL, bir öncekini gösterir", () => {
+    // 2026-08-05 çarşamba → içinde bulunulan hafta 08-03, rapor 07-27.
+    assert.equal(weekKey(new Date("2026-08-05T12:00:00Z")), "2026-08-03");
+    assert.equal(raporHaftasi(new Date("2026-08-05T12:00:00Z")), "2026-07-27");
+  });
+
+  test("pazartesi sabahı yeni rapor gelir (bir gün önce farklı haftaydı)", () => {
+    // Pazar 23:00 → rapor hâlâ 07-20. Pazartesi 00:30 → 07-27'ye geçer.
+    assert.equal(raporHaftasi(new Date("2026-08-09T23:00:00Z")), "2026-07-27");
+    assert.equal(raporHaftasi(new Date("2026-08-10T00:30:00Z")), "2026-08-03");
+  });
+
+  test("haftanın her günü aynı raporu verir — hafta ortasında değişmez", () => {
+    const bekle = "2026-07-27";
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(Date.UTC(2026, 7, 3 + i, 9));
+      assert.equal(raporHaftasi(d), bekle, `${d.toISOString().slice(0, 10)} raporu kaydı`);
+    }
+  });
+
+  test("rapor haftası her zaman tam 7 gün geride", () => {
+    const a = Date.parse(raporHaftasi(new Date("2026-08-05T12:00:00Z")));
+    const b = Date.parse(weekKey(new Date("2026-08-05T12:00:00Z")));
+    assert.equal(b - a, 7 * 86400000);
+  });
+});
 
 describe("hafta anahtarı", () => {
   test("haftanın HER GÜNÜ aynı pazartesiyi verir", () => {
