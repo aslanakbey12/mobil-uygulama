@@ -378,6 +378,7 @@ export const ACTIONS = {
   swipe:    "Kelimeler bölümünde yeni kelime keşfet",
   practice: "Alıştırma turu yap (SRS tekrarları)",
   reading:  "Seviyene uygun bir okuma parçası oku",
+  listening: "Sınav biçiminde bir dinleme parçası dinle ve soruları cevapla",
   scenario: "Senaryo provası yap (mülakat, market, doktor…)",
   grammar:  "Gramer dersi al: kural + örnekler + puanlanan alıştırma",
   friends:  "Arkadaş ekle (birlikte pratik için)",

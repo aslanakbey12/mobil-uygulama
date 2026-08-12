@@ -4,7 +4,7 @@
 // cevaplamak için. Değerlendirme takımı (eval/) elimizde; eksik olan tek şey aynı
 // vakaları başka bir modele gönderebilmekti.
 //
-// TASARIM KARARI: çağıran taraf (coach.js, reading.js, chat_ai.js, lesson.js)
+// TASARIM KARARI: çağıran taraf (coach.js, reading.js, chat_ai.js)
 // DEĞİŞMİYOR. Hepsi Gemini şeklinde gövde kuruyor ve öyle kalsın — 17 çağrı
 // noktasını nötr bir şekle çevirmek, ölçüm daha yapılmadan büyük bir göç
 // yapmak olurdu. Bunun yerine gövdeyi burada çeviriyoruz. Ölçüm bir kazanan

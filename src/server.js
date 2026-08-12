@@ -32,7 +32,6 @@ import { getUserId, authConfigured, verifyToken, tokenFromReq } from "./auth.js"
 import { supaConfigured, supa } from "./supabase.js";
 import { isPremium, setPremium, isAgeConfirmed } from "./entitlements.js";
 import * as coach from "./coach.js";
-import * as lesson from "./lesson.js";
 
 // Sosyal odaların yaş kapısı reddi. Tek metin: dört uçta da aynı şeyi söylemeli.
 const AGE_ERR = "Sosyal odalar 16 yaş ve üzeri içindir. Kelime çalışma bölümlerini kullanmaya devam edebilirsin.";
@@ -546,25 +545,19 @@ app.post("/coach/weekly", async (req, reply) => {
   }
 });
 
-// GRAMER DERSİ — sohbet değil, ders + puanlanan alıştırma.
-// (Bkz. src/lesson.js: üç YZ modu da aynı sohbet ekranına gidiyordu; gramer
-//  öğrenmek kural + alıştırma + geri bildirim ister, muhabbet değil.)
-app.post("/ai/grammar-lesson", async (req, reply) => {
-  const userId = getUserId(req);
-  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
-  if (!lesson.lessonConfigured()) return reply.code(503).send({ error: "Ders servisi yakında." });
-  if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
-  if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük YZ hakkın doldu, yarın tekrar dene." });
-  const { topic, level, weakWords } = req.body || {};
-  if (!lesson.topicKnown(topic)) return reply.code(400).send({ error: "bilinmeyen konu" });
-  if (await premiumKapisi(userId, reply, "Gramer dersleri")) return;
-  aiquota.bumpAi(userId);
-  try {
-    return await lesson.grammarLesson({ topic, level, weakWords });
-  } catch (e) {
-    return reply.code(502).send({ error: String(e.message || e) });
-  }
-});
+// GRAMER DERSİ UCU SİLİNDİ — gramer artık YZ ile üretilmiyor.
+//
+// Dersler istemcide, elle yazılmış içerik olarak duruyor (app/src/data/
+// grammar.a1.js ve grammar.a2.js: 54 konu, kural + fark adımı + alıştırma).
+// Bu uç, gramerin YZ'ye sorulduğu dönemden kalmıştı ve UZUN SÜREDİR ÖLÜYDÜ:
+// onu çağıran ekran hiçbir yığında kayıtlı değildi, istemcideki api.grammarLesson
+// da çağrılmıyordu. Üstelik yalnızca eski 6 konuyu tanıyordu; bugünkü 54
+// konudan biri gelseydi "bilinmeyen konu" ile 400 dönerdi.
+//
+// SİLİNMESİNİN SEBEBİ ZARARSIZ OLMAMASI: üzerinde premiumKapisi("Gramer
+// dersleri") duruyordu ve koda bakan biri —bu satırları yazan dahil— gramerin
+// premium olduğu sonucuna varıyordu. Ölü kod yer kaplamıyor, YANLIŞ HARİTA
+// veriyor. Gramer ücretsiz ve öyle kalıyor.
 
 // KOÇ SOHBETİ — kısa, hedef odaklı, EYLEMLE biten.
 // Serbest sohbet değil: koç 3-5 mesajda kullanıcıyı somut bir işe yönlendirir.
