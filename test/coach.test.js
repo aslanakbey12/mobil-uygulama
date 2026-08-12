@@ -83,7 +83,7 @@ describe("hafta anahtarı", () => {
 // resolveMode'daki beyaz liste mantığının aynısı.
 describe("koç eylemleri", () => {
   test("bilinen eylem türleri katalogda", () => {
-    for (const k of ["swipe", "practice", "reading", "scenario", "grammar", "friends", "social"]) {
+    for (const k of ["swipe", "practice", "reading", "listening", "scenario", "grammar", "friends", "social"]) {
       assert.ok(ACTIONS[k], `${k} katalogda yok`);
     }
   });
@@ -93,7 +93,9 @@ describe("koç eylemleri", () => {
     // silmek zorunda. Bu test o sözleşmeyi iki yönde de hatırlatır.
     // 7 (wordchat kaldırıldı: o mod sohbetten ibaretti, hem koçla hem
     // senaryoyla örtüşüyordu; kaldırılınca bu test uyardı — istenen davranış).
-    assert.equal(Object.keys(ACTIONS).length, 7);
+    // 8: dinleme eklendi — uygulamada Beceriler sekmesinde gerçek bir
+    // ekranı var, dolayısıyla koç reçete edebilir.
+    assert.equal(Object.keys(ACTIONS).length, 8);
   });
 
   test("eylem açıklamaları BOŞ olamaz — model neyi seçtiğini bilmeli", () => {
