@@ -1274,11 +1274,16 @@ app.post("/webhooks/revenuecat", async (req, reply) => {
   const uid = ev.app_user_id;
   const ACTIVE = ["INITIAL_PURCHASE", "RENEWAL", "PRODUCT_CHANGE", "UNCANCELLATION", "NON_RENEWING_PURCHASE"];
   const INACTIVE = ["EXPIRATION", "CANCELLATION", "SUBSCRIPTION_PAUSED", "BILLING_ISSUE"];
+  let yazildi = null;
   if (uid) {
-    if (ACTIVE.includes(ev.type)) await setPremium(uid, true, ev.expiration_at_ms ? new Date(ev.expiration_at_ms).toISOString() : null);
-    else if (INACTIVE.includes(ev.type)) await setPremium(uid, false, null);
+    if (ACTIVE.includes(ev.type)) yazildi = await setPremium(uid, true, ev.expiration_at_ms ? new Date(ev.expiration_at_ms).toISOString() : null);
+    else if (INACTIVE.includes(ev.type)) yazildi = await setPremium(uid, false, null);
   }
-  app.log.info({ type: ev.type, uid }, "revenuecat webhook");
+  // SONUCU DA LOGLA. Eskiden yalnizca "olay geldi" yaziliyordu; yazmanin
+  // BASARILI olup olmadigi hicbir yerde gorunmuyordu. Odeme akisinda
+  // "istegi aldim" ile "hakki verdim" arasindaki fark her seydir.
+  if (yazildi === false) app.log.error({ type: ev.type, uid }, "revenuecat webhook — PREMIUM YAZILAMADI");
+  else app.log.info({ type: ev.type, uid, yazildi }, "revenuecat webhook");
   return reply.code(200).send({ received: true });
 });
 
