@@ -39,8 +39,13 @@ from (
     ('14_word_images.sql',      to_regclass('public.word_images') is not null),
     ('15_coach_reports.sql',    to_regclass('public.coach_reports') is not null),
     ('16_coach_chats.sql',      to_regclass('public.coach_chats') is not null),
+    -- notes sütunu coach_CHATS'e ekleniyor, coach_reports'a değil. İlk yazışta
+    -- yanlış tabloya bakıyordum: sonuç yine "EKSİK" çıkıyordu ama YANLIŞ
+    -- sebeple — göç çalıştırılmış olsa bile eksik görünecekti. Denetim aracının
+    -- yanlış alarmı, denetimsizlikten beterdir: bir kez yanlış çıkarsa bir daha
+    -- kimse ona bakmaz.
     ('17_coach_notes.sql',      exists (select 1 from information_schema.columns
-                                        where table_schema='public' and table_name='coach_reports'
+                                        where table_schema='public' and table_name='coach_chats'
                                           and column_name='notes')),
     ('18_reading_cache.sql',    to_regclass('public.reading_cache') is not null),
     ('19_report_stats.sql',     exists (select 1 from information_schema.columns
