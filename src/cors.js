@@ -12,9 +12,27 @@
 // kendi adının içine gömen bir adresi ya da şeması değiştirilmiş bir adresi
 // eşleştirmez. Gevşek bir joker, saldırganın kendi sayfasından bu API'ye
 // istek atabilmesi demek olurdu.
+// SONDAKİ "/" AYIKLANIYOR.
+//
+// Origin'de asla yol bölümü olmaz — tarayıcı "https://site.com" gönderir,
+// "https://site.com/" değil. Dolayısıyla ayardaki sondaki "/" her zaman bir
+// yazım hatasıdır ve bunu aynen eşleştirmeye çalışmak, hiç eşleşmemek demek.
+//
+// Yaşandı: CORS_ORIGINS'e iki adres "https://...netlify.app/" biçiminde
+// girilmişti. Doğru site yazılsa bile eşleşmeyecekti. Sonuç kullanıcıya
+// "internet bağlantısı yok ya da sunucuya ulaşılamıyor" diye göründü — çünkü
+// tarayıcı isteği tamamen iptal ediyor. Teşhis edilmesi en zor arıza biçimi,
+// üstelik sebebi tek bir karakter.
+//
+// AYARDAN kırpmak güvenliği gevşetmiyor: eşleşmeyi genişletmiyor, yalnızca
+// karşılaştırmayı tarayıcının gerçekten gönderdiği biçime hizalıyor.
+const kirp = (x) => String(x || "").trim().replace(/\/+$/, "");
+
 export function originIzinli(liste, o) {
   if (!o) return false;
-  for (const kural of liste) {
+  o = kirp(o);
+  for (const ham of liste) {
+    const kural = kirp(ham);
     if (kural === o) return true;
     const y = kural.indexOf("://*.");
     if (y < 0) continue;

@@ -58,3 +58,41 @@ describe("CORS origin eşleştirme", () => {
     assert.equal(kur(["https://*.netlify.app"])(undefined), false);
   });
 });
+
+// ── SONDAKİ "/" ──────────────────────────────────────────────────────────────
+//
+// GERÇEK OLAY: CORS_ORIGINS'e adresler "https://...netlify.app/" biçiminde
+// girilmişti. Origin'de asla yol bölümü olmadığı için hiçbiri eşleşmedi ve
+// tarayıcı bütün istekleri iptal etti. Kullanıcıya "internet bağlantısı yok ya
+// da sunucuya ulaşılamıyor" göründü — sebebi tek bir karakterdi.
+describe("sondaki / ayarı bozmuyor", () => {
+  test("ayarda / olsa da eşleşiyor", () => {
+    const izin = kur(["https://liveda.netlify.app/"]);
+    assert.equal(izin("https://liveda.netlify.app"), true);
+  });
+
+  test("birden fazla / ve boşluk da temizleniyor", () => {
+    const izin = kur(["  https://liveda.netlify.app//  "]);
+    assert.equal(izin("https://liveda.netlify.app"), true);
+  });
+
+  test("jokerde de çalışıyor", () => {
+    const izin = kur(["https://*.netlify.app/"]);
+    assert.equal(izin("https://liveda.netlify.app"), true);
+  });
+
+  // GÜVENLİK GEVŞEMİYOR: kırpma yalnızca sondaki eğik çizgiyi alıyor, farklı
+  // bir hostu eşleştirmiyor. Bunu yazmasaydım kırpmanın kapıyı açıp açmadığı
+  // ölçülmemiş olurdu.
+  test("başka host yine reddediliyor", () => {
+    const izin = kur(["https://liveda.netlify.app/"]);
+    assert.equal(izin("https://kotu.com"), false);
+    assert.equal(izin("https://liveda.netlify.app.kotu.com"), false);
+    assert.equal(izin("http://liveda.netlify.app"), false);   // şema farklı
+  });
+
+  test("yol içeren sahte origin reddediliyor", () => {
+    const izin = kur(["https://*.netlify.app/"]);
+    assert.equal(izin("https://kotu.com/x.netlify.app"), false);
+  });
+});
