@@ -32,7 +32,15 @@ export function parseJson(txt) {
 
 // Koç için tercih edilen model. Ayarlanabilir bırakıldı: model isimleri değişiyor
 // ve kilitli bir isim, model emekliye ayrılınca koçu sessizce bozardı.
-const COACH_MODEL = process.env.COACH_MODEL || "gemini-pro-latest";
+//
+// OPENROUTER'A TAŞINDI (bkz. reading.js'teki aynı gerekçe): Gemini'nin doğrudan
+// kredisi bitince koç sohbeti de durmuştu. Model aynı, kapı farklı.
+//
+// Koç sohbeti pro modelde kalıyor — rapor DeepSeek'e taşınmıştı (ölçümle:
+// 82/83, 6 kat ucuz) ama sohbet farklı bir iş: kullanıcının söylediğine
+// gerçek zamanlı, kişiye özel cevap veriyor ve zayıf modelde bunu yaptığı
+// hemen belli oluyor.
+const COACH_MODEL = process.env.COACH_MODEL || "google/gemini-2.5-pro";
 // Haftalık rapor için ayrı model — koçun yapışkan modeline düşmesin (bkz. weeklyReport).
 //
 // FLASH-LITE'TAN ÇIKARILDI. Ucuz olduğu için seçilmişti ve rapor ücretsiz

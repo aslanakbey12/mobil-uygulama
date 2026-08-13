@@ -4,9 +4,27 @@ import { callModel, activeProvider } from "./llm.js";
 // Kullanıcının öğrenme havuzundaki kelimelerden, seviyesine uygun kısa bir metin +
 // 3 anlama sorusu üretir. Kota tasarrufu için üretilenler önbelleğe alınır.
 const KEY = process.env.GEMINI_API_KEY || "";
+// OpenRouter anahtarı: modeller oraya taşındığı için "yapılandırılmış mı"
+// sorusunun cevabı artık ikisinden BİRİNİN varlığı.
+const ALT_KEY = process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY || "";
 // Not: eski modeller (2.0, 2.5-flash) yeni kullanıcılara kapatıldı. "flash-latest"
 // her zaman güncel GA flash'a (şu an 3.5-flash) çözülür ve yeni kullanıcılara açıktır.
-const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
+// VARSAYILAN ARTIK OPENROUTER ÜZERİNDEN.
+//
+// Gemini'nin doğrudan API kredisi bitti ve okuma, koç, çeviri — YZ'ye giden
+// her şey tek anda durdu. Sunucu ayaktaydı, CORS düzgündü, premium açıktı;
+// yine de hiçbir şey üretilemiyordu. Tek bir sağlayıcıya bağlı olmanın
+// bedeli buydu.
+//
+// Model ADI yönlendirmeyi belirliyor (bkz. llm.js): eğik çizgi varsa
+// OpenRouter, yoksa doğrudan Gemini. Yani aynı model, farklı kapıdan.
+// Kalite değişmiyor, faturanın gittiği yer değişiyor.
+//
+// Değişkenin adı hâlâ GEMINI_MODEL: yeniden adlandırmak Render'da ve
+// .env.example'da eşzamanlı değişiklik ister, o da unutulursa okuma sessizce
+// varsayılana düşer. Adın yanıltıcılığı, kaçırılmış bir ayarın sessizliğinden
+// daha ucuz.
+const MODEL = process.env.GEMINI_MODEL || "google/gemini-2.5-flash";
 // Okuma parçası için ayrı model (boş = genel zincir). bkz. generatePassage.
 const READING_MODEL = process.env.READING_MODEL || "";
 // KISA YARDIMCI ÇAĞRILAR için ayrı model (ipucu, örnek cümle, çeviri, görsel
@@ -37,7 +55,19 @@ export function dailyCapFor(premium = false) {
 
 import { underGlobalCap, bumpGlobal } from "./aiquota.js";
 
-export const readingConfigured = () => !!KEY;
+// YAPILANDIRILMIŞ MI = "ÇAĞIRABİLECEĞİM BİR SAĞLAYICI VAR MI".
+//
+// Eskiden yalnızca GEMINI_API_KEY'e bakıyordu ve o zamanlar doğruydu: tek
+// sağlayıcı vardı. Modeller OpenRouter'a taşınınca bu kontrol YANLIŞ hale
+// geldi — Gemini anahtarı silinirse okuma, sohbet ve koç 503 döner, oysa
+// üçü de artık OpenRouter'dan geçiyor.
+//
+// Bu sessiz bir arıza olurdu: kullanıcı "yakında" yazısını görür, loglarda
+// hata yoktur, çünkü kod düzgün çalışıyordur — sadece yanlış şeye bakıyordur.
+//
+// chat_ai.js ve coach.js de buna bağlı (chatConfigured / coachConfigured),
+// yani bu tek satır üç özelliğin kapısı.
+export const readingConfigured = () => !!KEY || !!ALT_KEY;
 
 // Geçici teşhis: adaylarda GERÇEKTEN üretim yap, hangisi çalışıyor gör.
 export async function testModels() {
@@ -56,7 +86,7 @@ export async function testModels() {
 
 // Geçici teşhis: bu projede generateContent destekleyen mevcut modelleri listele.
 export async function listModels() {
-  if (!KEY) return ["no-key"];
+  if (!KEY && !ALT_KEY) return ["no-key"];
   try {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${KEY}&pageSize=200`);
     if (!r.ok) return [`ERR ${r.status}`];
@@ -407,7 +437,7 @@ const mnemoCache = new Map();
 export async function generateMnemonic(en, tr) {
   const key = String(en).toLowerCase();
   if (mnemoCache.has(key)) return mnemoCache.get(key);
-  if (!KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
+  if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const prompt = `Türk öğrenci için İngilizce "${en}" (Türkçe anlamı: ${tr}) kelimesini akılda tutmaya yardımcı, KISA (tek cümle, en fazla 20 kelime) yaratıcı bir hafıza kancası yaz. Kelimenin okunuşunu ya da görüntüsünü Türkçe bir çağrışımla anlamına bağla. SADECE Türkçe ipucu cümlesini yaz; tırnak, başlık veya açıklama ekleme.`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
@@ -431,7 +461,7 @@ const translateCache = new Map();
 export async function translateWordCard(en, definition, example) {
   const key = String(en).toLowerCase();
   if (translateCache.has(key)) return translateCache.get(key);
-  if (!KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
+  if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const def = String(definition || "").slice(0, 200);
   const ex = String(example || "").slice(0, 200);
   const prompt = `Türk İngilizce öğrencisi için çeviri yap. Kelime: "${en}".
@@ -466,7 +496,7 @@ const imgQueryCache = new Map();
 export async function imageQueryFor(en, tr, definition) {
   const key = String(en).toLowerCase();
   if (imgQueryCache.has(key)) return imgQueryCache.get(key);
-  if (!KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
+  if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const prompt = `English word: "${en}" (Turkish meaning: ${String(tr || "").slice(0, 60)}; definition: ${String(definition || "").slice(0, 160)}).
 1) Can this word's meaning be shown CLEARLY in a single photograph?
 
@@ -511,7 +541,7 @@ export async function generateExample(en, tr, level, context) {
   const ctx = String(context || "günlük hayat").toLowerCase().slice(0, 40);
   const key = `${String(en).toLowerCase()}|${lvl}|${ctx}`;
   if (exampleCache.has(key)) return exampleCache.get(key);
-  if (!KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
+  if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const prompt = `Write ONE natural English example sentence at CEFR level ${lvl} that clearly uses the word "${en}" (Turkish meaning: ${tr}).
 Context/topic: ${ctx}. Keep it short (max 14 words), natural, and make the word's meaning clear from context.
 Also give a Turkish translation of the sentence.
@@ -536,7 +566,7 @@ export async function generatePassage(level, words, opts = {}) {
   // bu kullanıcının dünkü oturumunun) ürettiği parça burada duruyor.
   const kalici = await cacheGet(cacheKey);
   if (kalici) { cache.set(cacheKey, kalici); return kalici; }
-  if (!KEY) throw new Error("Okuma servisi henüz yapılandırılmadı.");
+  if (!KEY && !ALT_KEY) throw new Error("Okuma servisi henüz yapılandırılmadı.");
 
   const body = {
     contents: [{ parts: [{ text: buildPrompt(level, words, opts) }] }],
