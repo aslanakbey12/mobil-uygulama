@@ -13,16 +13,71 @@ export const chatConfigured = () => readingConfigured();
 // GÜVENLİK: id → sabit metin eşlemesi. İstemciden gelen değer doğrudan isteme
 // GİRMEZ, yalnızca bu tablodaki anahtarlarla eşleşir; eşleşmezse varsayılana
 // düşer. Serbest metnin isteme sızması istem enjeksiyonunun klasik yoludur.
+// ── ROLLER: TEK CÜMLE DEĞİL, GERÇEK BİR KARAKTER ────────────────────────────
+//
+// Önce her senaryo tek satırdı ("a shop. You are the shop assistant."). Sonuç,
+// hangi senaryoyu seçersen seç aynı kibar sohbet partneriydi — market
+// çalışanı gibi DAVRANMIYORDU, market hakkında konuşuyordu. Kullanıcının
+// istediği tam tersi: "eğer market çalışanı ise tam bir market çalışanı gibi
+// davransın".
+//
+// Her rolde üç şey ayrı ayrı yazılı:
+//   yer      — sahne, somut ayrıntılarıyla (model uyduracaksa tutarlı uydursun)
+//   rol      — sen kimsin, nasıl konuşursun
+//   davranis — bu rolün YAPTIĞI işler; sohbet konusu değil, iş akışı
+//
+// GÜVENLİK DEĞİŞMEDİ: hepsi sabit metin, istemciden gelen değer yalnızca
+// anahtarla eşleşiyor. Serbest metin isteme hâlâ sızmıyor.
 const SCENARIOS = {
-  interview:  "a job interview. You are the interviewer. Ask about their experience, strengths, and why they want the role.",
-  meeting:    "a work meeting. You are a colleague. Discuss a plan, ask their opinion, and politely disagree once.",
-  shopping:   "a shop. You are the shop assistant. Help them find an item, discuss size/price, handle a return.",
-  restaurant: "a restaurant. You are the waiter. Take their order, suggest dishes, handle a small problem.",
-  airport:    "an airport check-in desk. You are the agent. Handle luggage, seat choice, and a delay question.",
-  doctor:     "a doctor's office. You are the doctor. Ask about symptoms, duration, and give simple advice.",
-  hotel:      "a hotel reception. You are the receptionist. Handle check-in, a room problem, and late checkout.",
-  smalltalk:  "a casual first meeting. You are a friendly stranger making small talk.",
+  interview: {
+    yer: "a small meeting room at a mid-sized company. You have their CV on the table.",
+    rol: "the hiring manager. Professional but warm. You speak in short, clear turns.",
+    davranis: "Open by introducing yourself and the role. Ask about their background, then a strength WITH an example, then why this company. React to what they actually say — follow up on one detail they mention. Near the end, invite their questions. Never interview yourself: one question at a time.",
+  },
+  meeting: {
+    yer: "a weekly team meeting. The team must decide how to handle a delayed project.",
+    rol: "a colleague on the same team. Direct but polite, like a real coworker.",
+    davranis: "State the problem, ask what they think, and actually respond to their idea. Disagree ONCE with a reason, then look for a compromise. Use meeting language naturally (I see your point, shall we, let's).",
+  },
+  shopping: {
+    yer: "a clothing and general goods shop on a busy street. You know the stock: sizes, colours, prices, what is on sale.",
+    rol: "the shop assistant. Friendly, practical, a little quick — you have other customers.",
+    davranis: "Greet and ask what they are looking for. INVENT concrete stock details and stay consistent with them: give real prices (e.g. 249 TL), sizes (S/M/L), colours, and say when something is out of stock. Suggest an alternative. Handle a return by asking for the receipt and the reason. Behave like a shop worker, not a teacher: no vocabulary lessons, no 'good job'.",
+  },
+  restaurant: {
+    yer: "a mid-range restaurant at dinner time. You know the menu and today's specials.",
+    rol: "the waiter. Attentive, efficient, polite.",
+    davranis: "Greet, seat them, and recommend a specific dish by name. INVENT a consistent menu with prices. Ask about drinks, allergies, how they want it cooked. Bring one small problem to life if the chat is going well (a dish is finished, a short wait). Take the bill request seriously: state a total.",
+  },
+  airport: {
+    yer: "a check-in desk at a busy international airport. Their flight is in two hours.",
+    rol: "the check-in agent. Efficient, procedural, courteous.",
+    davranis: "Ask for passport and destination. Handle bags with CONCRETE numbers: weight limits (23 kg), excess fees, seat rows. Give a real gate number and boarding time. If they ask about a delay, give a specific new time and a reason. Stay procedural — this is a desk, not a chat.",
+  },
+  doctor: {
+    yer: "a GP's consultation room. This is a first visit about a recent complaint.",
+    rol: "the doctor. Calm, methodical, reassuring — but you ask a lot of questions.",
+    davranis: "Ask what brings them in, then follow the real order: what hurts, since when, how bad, anything that makes it better or worse, any medication or allergies. Give simple, concrete advice and a clear next step (rest, a prescription, come back in a week). Never diagnose anything frightening.",
+  },
+  hotel: {
+    yer: "the reception desk of a city hotel, late afternoon.",
+    rol: "the receptionist. Polished, helpful, solution-oriented.",
+    davranis: "Handle check-in with real details: room number, floor, breakfast hours, wifi password. If they report a problem, apologise once and OFFER A CONCRETE FIX (send someone up, change the room). Answer late checkout with a specific time and any fee.",
+  },
+  smalltalk: {
+    yer: "a coffee queue at a conference. You are both waiting.",
+    rol: "a friendly stranger, genuinely curious.",
+    davranis: "Start with something about the situation (the queue, the event). Share a little about yourself before asking — real small talk goes both ways. Follow up on what they say instead of jumping to a new topic.",
+  },
 };
+
+// Rolü modele anlatan metin. Ayrı fonksiyon: hem açılışta hem her cevapta
+// AYNI metin gidiyor — ikisi ayrı yazılsaydı karakter mesaj başına kayardı.
+function rolMetni(sc) {
+  return `SETTING: ${sc.yer}
+YOUR ROLE: You are ${sc.rol}
+WHAT YOU DO: ${sc.davranis}`;
+}
 
 const GRAMMAR = {
   articles:     "articles (a/an/the). Turkish has no articles, so learners drop them.",
@@ -36,7 +91,7 @@ const GRAMMAR = {
 // İstemciden gelen ham değerleri GÜVENLİ bir bağlam nesnesine çevirir.
 export function resolveMode({ mode, scenario, topic } = {}) {
   if (mode === "scenario" && SCENARIOS[scenario]) {
-    return { mode: "scenario", id: scenario, setting: SCENARIOS[scenario] };
+    return { mode: "scenario", id: scenario, setting: rolMetni(SCENARIOS[scenario]) };
   }
   if (mode === "grammar" && GRAMMAR[topic]) {
     return { mode: "grammar", id: topic, focus: GRAMMAR[topic] };
@@ -48,8 +103,19 @@ export function resolveMode({ mode, scenario, topic } = {}) {
 export function modeBrief(ctx) {
   if (!ctx) return "";
   if (ctx.mode === "scenario") {
-    return `ROLEPLAY: You are role-playing ${ctx.setting}
-Stay in role. Keep it realistic but simple. If the learner gets stuck, help them with a hint.`;
+    return `ROLEPLAY — STAY IN CHARACTER AT ALL TIMES.
+${ctx.setting}
+
+HOW TO PLAY IT:
+- You are NOT a teacher here. No praise ("great job"), no vocabulary tips, no
+  corrections unless a real person in your role would ask for clarification.
+- Invent concrete details (names, prices, times, room numbers) and stay
+  consistent with what you already said.
+- React to what they actually said. Do not restart the scene.
+- If they get stuck or go silent, do what your character would do to move
+  things along — ask a simpler question, offer a choice ("cash or card?").
+- If they write in Turkish, your character politely says they do not speak
+  Turkish and repeats the question simply in English. Stay in role even then.`;
   }
   if (ctx.mode === "grammar") {
     return `GRAMMAR COACH: Today's focus is ${ctx.focus}
@@ -59,12 +125,32 @@ When they make a mistake in THIS structure, correct it explicitly and kindly —
   return "";
 }
 
-// Sohbet açılışı: hedef kelimelerle doğal, kısa bir selam + ilk soru.
+// Sohbet açılışı.
+//
+// SENARYODA KELİMELER GİRMİYOR. Önce açılış her modda "şu kelimeleri içeren bir
+// konu aç" diyordu — yani market senaryosuna girip rastgele kelimeler üzerine
+// sohbet açan bir karşı taraf buluyordun. Kullanıcının ilk şikâyeti buydu:
+// "senaryolarda sohbet ettiğiniz kelimeler olmasın".
+//
+// Doğrusu da bu: senaryo bir PROVA. Kasiyer senin zayıf kelimelerini bilmez,
+// bilse bile onları konuşmaya sıkıştırmaz. Kelime çalışması Alıştırma'nın işi;
+// buranın işi gerçek bir durumu idare edebilmek.
 export async function generateOpener(words, level, botName, ctx = null) {
   const lvl = ["A1", "A2", "B1", "B2", "C1", "C2"].includes(level) ? level : "B1";
+  const senaryo = ctx?.mode === "scenario";
   const ws = (words || []).slice(0, 4).join(", ");
   const brief = modeBrief(ctx);
-  const prompt = `You are "${botName}", a friendly English conversation partner for a Turkish learner at CEFR level ${lvl}.
+  const prompt = senaryo
+    ? `You are role-playing a character for a Turkish learner at CEFR level ${lvl}.
+${brief}
+
+Write your FIRST line, exactly as your character would open this situation.
+- In character from the first word. No greeting the "learner", no meta talk.
+- Max 25 words, ${lvl} level, natural spoken English.
+- End with ONE question that starts the interaction (what your character would
+  actually ask first).
+Plain text only, no quotes.`
+    : `You are "${botName}", a friendly English conversation partner for a Turkish learner at CEFR level ${lvl}.
 ${brief}
 Start a natural, warm 1-on-1 chat about a topic that naturally involves these words: ${ws || "everyday life"}.
 Write ONE short opening message (max 30 words) at ${lvl} level: a friendly greeting + a topic + ONE simple question to get them talking. Sound like a real person, casual and encouraging. Plain text only, no quotes.`;
@@ -161,14 +247,33 @@ ${convo}`;
 //   zaten kısa çıktı tavanı (30 kelime) — bu ek katman.
 // · HIZ: sohbette hız > mükemmellik. tries:1 + kısa timeout → bozuk modelde takılmadan
 //   sonrakine geçilir (yapışkan model seçimiyle birlikte gecikmeyi kökten düşürür).
-export async function generateReply(history, words, level, botName) {
+// ROL HER CEVAPTA TEKRARLANIYOR.
+//
+// EN BÜYÜK HATA BURADAYDI: bu fonksiyona ctx hiç geçirilmiyordu. Rol yalnızca
+// AÇILIŞ mesajında vardı; ikinci mesajdan itibaren model "kelimelerine
+// odaklanan genel sohbet partneri"ne dönüyordu. Yani kullanıcı market
+// senaryosuna giriyor, ilk cümle kasiyer gibi geliyor, sonra karşısında bir
+// İngilizce öğretmeni buluyordu.
+//
+// Karakterin kalıcı olmasının tek yolu her istekte yeniden söylenmesi: model
+// önceki istemi hatırlamıyor, yalnızca gönderdiğimizi biliyor.
+export async function generateReply(history, words, level, botName, ctx = null) {
   const lvl = ["A1", "A2", "B1", "B2", "C1", "C2"].includes(level) ? level : "B1";
+  const senaryo = ctx?.mode === "scenario";
   const ws = (words || []).slice(0, 4).join(", ");
   const convo = (history || []).slice(-8).map((m) => `${m.mine ? "Learner" : botName}: ${m.text}`).join("\n");
-  const prompt = `You are "${botName}", a friendly English conversation partner for a Turkish learner at CEFR level ${lvl}. Casual 1-on-1 practice chat.
-Focus words the learner is studying: ${ws || "everyday topics"}.
-
-REPLY RULES:
+  const kimlik = senaryo
+    ? `${modeBrief(ctx)}`
+    : `You are "${botName}", a friendly English conversation partner for a Turkish learner at CEFR level ${lvl}. Casual 1-on-1 practice chat.
+Focus words the learner is studying: ${ws || "everyday topics"}.`;
+  // Senaryoda kelime kuralı ve öğretmen refleksi YOK; ikisi de karakteri bozuyor.
+  const kurallar = senaryo
+    ? `REPLY RULES:
+- Natural spoken English at ${lvl} level (simple, clear) — but always IN CHARACTER.
+- SHORT: 1-2 sentences, max ~30 words.
+- Move the situation forward: ask what your character would ask next.
+- Do NOT praise, do NOT correct grammar, do NOT mention English or learning.`
+    : `REPLY RULES:
 - Natural, encouraging English at ${lvl} level (simple, clear).
 - SHORT: 1-2 sentences, max ~30 words.
 - Usually end with a question to keep them talking.
@@ -178,7 +283,11 @@ REPLY RULES:
 IF THE LEARNER WRITES IN TURKISH:
 - Do NOT continue the conversation in Turkish.
 - Warmly show how to say it in English: You can say: "..." — then invite them to try.
-- Treat it as a teaching moment, never scold.
+- Treat it as a teaching moment, never scold.`;
+
+  const prompt = `${kimlik}
+
+${kurallar}
 
 SCOPE (important):
 - You are ONLY an English conversation partner. If asked to write code, translate long

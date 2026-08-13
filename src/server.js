@@ -247,7 +247,7 @@ app.register(async function (appWs) {
             });
           };
 
-          chatAI.generateReply(room.aiHistory, room.focusWords, room.level, room.ai.name)
+          chatAI.generateReply(room.aiHistory, room.focusWords, room.level, room.ai.name, room.aiCtx)
             .then((r) => {
               if (r && r.reply) sendReply(r);
               else sendReply(chatAI.fallbackReply(room.focusWords, room.aiTurns));

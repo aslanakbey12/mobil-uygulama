@@ -15,7 +15,24 @@ describe("YZ modu çözümleme", () => {
     const c = resolveMode({ mode: "scenario", scenario: "interview" });
     assert.equal(c.mode, "scenario");
     assert.equal(c.id, "interview");
-    assert.match(c.setting, /job interview/);
+    // Roller tek cümlelikten tam karaktere geçirildiğinde bu satır "job
+    // interview" ifadesini arıyordu ve kırıldı. Testin NIYETI id -> dogru
+    // senaryo eslesmesi; belirli bir cumleyi ezberlemek degil. O yuzden artik
+    // yalnizca o senaryoya OZGU bir isaret araniyor.
+    assert.match(c.setting, /hiring manager/i);
+    assert.match(c.setting, /SETTING:/);        // yapisal metin uretiliyor
+  });
+
+  test("her senaryo KENDI rolunu veriyor — karisma yok", () => {
+    // Roller elle yazildigi icin kopyala-yapistir hatasi (iki senaryonun ayni
+    // metni almasi) tamamen sessiz olurdu: kullanici markete girip garson
+    // bulurdu ve kod dogru gorunurdu.
+    const idler = ["interview", "meeting", "shopping", "restaurant", "airport", "doctor", "hotel", "smalltalk"];
+    const metinler = idler.map((id) => resolveMode({ mode: "scenario", scenario: id }).setting);
+    assert.equal(new Set(metinler).size, idler.length, "iki senaryo ayni rol metnini paylasiyor");
+    for (const m of metinler) {
+      assert.match(m, /SETTING:[\s\S]*YOUR ROLE:[\s\S]*WHAT YOU DO:/);
+    }
   });
 
   test("bilinen gramer konusu doğru bağlama çevrilir", () => {
