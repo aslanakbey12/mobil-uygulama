@@ -1,6 +1,12 @@
 node_modules/
 .env
 .env.*
+# ...ama ORNEK dosya paylasilmak icin var: gizli deger tasimiyor,
+# hangi degiskenlerin gerektigini soyluyor. `.env.*` onu da yutuyordu ve
+# dosya HIC commit edilmemisti - yani kurulumu yapanin elinde bir kontrol
+# listesi hicbir zaman olmadi. Render'da AUTH_STRICT ve
+# REVENUECAT_WEBHOOK_TOKEN'in eksik kalmasinin muhtemel sebebi bu.
+!.env.example
 *.log
 npm-debug.log*
 .DS_Store
