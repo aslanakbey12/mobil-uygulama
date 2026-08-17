@@ -83,19 +83,31 @@ describe("hafta anahtarı", () => {
 // resolveMode'daki beyaz liste mantığının aynısı.
 describe("koç eylemleri", () => {
   test("bilinen eylem türleri katalogda", () => {
-    for (const k of ["swipe", "practice", "reading", "listening", "scenario", "grammar", "friends", "social"]) {
+    for (const k of ["swipe", "practice", "reading", "scenario", "grammar", "friends", "social"]) {
       assert.ok(ACTIONS[k], `${k} katalogda yok`);
     }
   });
 
+  test("KAPALI gösterilen bölüm katalogda DEĞİL", () => {
+    // Dinleme, istemcide "çok yakında" olarak gösteriliyor: özellik çalışıyor
+    // ama kütüphane dört parça ve bitiren kullanıcı duvara çarpıyor.
+    // Katalogda kalsaydı koç, kapalı gösterilen bir bölüme yönlendiren
+    // haftalık plan yazabilirdi — kullanıcı için çelişki, bizim için takibi
+    // zor bir hata. Kütüphane büyüyüp kart açılınca bu test kalkacak.
+    assert.equal(ACTIONS.listening, undefined);
+  });
+
   test("katalog SADECE uygulamada karşılığı olan yerleri içerir", () => {
     // Tür EKLEYEN istemcide karşılığını açmak, tür KALDIRAN istemciden de
-    // silmek zorunda. Bu test o sözleşmeyi iki yönde de hatırlatır.
-    // 7 (wordchat kaldırıldı: o mod sohbetten ibaretti, hem koçla hem
-    // senaryoyla örtüşüyordu; kaldırılınca bu test uyardı — istenen davranış).
-    // 8: dinleme eklendi — uygulamada Beceriler sekmesinde gerçek bir
-    // ekranı var, dolayısıyla koç reçete edebilir.
-    assert.equal(Object.keys(ACTIONS).length, 8);
+    // silmek zorunda. Bu test o sözleşmeyi iki yönde de hatırlatır ve
+    // gerçekten hatırlattı: dinleme katalogdan çıkarılınca burada kırıldı.
+    //
+    // Sayının tarihçesi:
+    //   7 — wordchat kaldırıldı (mod sohbetten ibaretti, koç ve senaryoyla
+    //       örtüşüyordu; kaldırılınca bu test uyardı — istenen davranış)
+    //   8 — dinleme eklendi (Beceriler'de gerçek bir ekranı vardı)
+    //   7 — dinleme geçici olarak kapatıldı (kütüphane yetersiz)
+    assert.equal(Object.keys(ACTIONS).length, 7);
   });
 
   test("eylem açıklamaları BOŞ olamaz — model neyi seçtiğini bilmeli", () => {
