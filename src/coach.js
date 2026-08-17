@@ -394,8 +394,17 @@ export const ACTIONS = {
   // Kütüphane büyüyünce geri eklenecek; ekran ve rota yerinde duruyor.
   scenario: "Senaryo provası yap (mülakat, market, doktor…)",
   grammar:  "Gramer dersi al: kural + örnekler + puanlanan alıştırma",
-  friends:  "Arkadaş ekle (birlikte pratik için)",
-  social:   "Gerçek biriyle pratik yap (yazılı/sesli oda, oyun)",
+  // friends ve social GEÇİCİ OLARAK ÇIKARILDI — Sosyal sekmesi uykuda.
+  //
+  // Sebep dinlemedekiyle aynı sınıf ama farklı: sosyal özellikler ÇALIŞIYOR,
+  // yalnızca karşı taraf yok. Üç aktivite de eşzamanlı başka kullanıcı
+  // gerektiriyor ve kapalı testte o yoğunluk oluşmuyor (sunucuda sıfır oda,
+  // sıfır soket). Koç "gerçek biriyle pratik yap" derse, kullanıcı gizlenmiş
+  // bir sekmeye yönlendirilir ve yönlendirilse bile kimseyi bulamaz —
+  // tutulamayacak bir tavsiye, hiç tavsiye vermemekten kötü.
+  //
+  // Kullanıcı yoğunluğu oluşunca ikisi de geri gelecek; istemcideki sekme de
+  // (App.js, tabBarButton: () => null) aynı anda açılmalı.
 };
 
 // Modelin döndürdüğü eylemleri temizle. Bilinmeyen tür → düşer.

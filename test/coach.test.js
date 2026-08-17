@@ -83,18 +83,25 @@ describe("hafta anahtarı", () => {
 // resolveMode'daki beyaz liste mantığının aynısı.
 describe("koç eylemleri", () => {
   test("bilinen eylem türleri katalogda", () => {
-    for (const k of ["swipe", "practice", "reading", "scenario", "grammar", "friends", "social"]) {
+    for (const k of ["swipe", "practice", "reading", "scenario", "grammar"]) {
       assert.ok(ACTIONS[k], `${k} katalogda yok`);
     }
   });
 
-  test("KAPALI gösterilen bölüm katalogda DEĞİL", () => {
-    // Dinleme, istemcide "çok yakında" olarak gösteriliyor: özellik çalışıyor
-    // ama kütüphane dört parça ve bitiren kullanıcı duvara çarpıyor.
-    // Katalogda kalsaydı koç, kapalı gösterilen bir bölüme yönlendiren
-    // haftalık plan yazabilirdi — kullanıcı için çelişki, bizim için takibi
-    // zor bir hata. Kütüphane büyüyüp kart açılınca bu test kalkacak.
-    assert.equal(ACTIONS.listening, undefined);
+  test("KAPALI bölümler katalogda DEĞİL", () => {
+    // Koç yalnızca kullanıcının GERÇEKTEN yapabileceği şeyi reçete etmeli.
+    // Tutulamayacak bir tavsiye, hiç tavsiye vermemekten kötü.
+    //
+    //   listening — bölüm "çok yakında": özellik çalışıyor ama kütüphane dört
+    //               parça, bitiren kullanıcı duvara çarpıyor.
+    //   friends /  — Sosyal sekmesi uykuda: özellikler çalışıyor ama karşı
+    //   social       taraf yok (sunucuda sıfır oda, sıfır soket). Kapalı testte
+    //                iki kişinin aynı anda kuyrukta olması imkânsıza yakın.
+    //
+    // Üçü de geri gelecek; istemcideki karşılıkları da AYNI ANDA açılmalı.
+    for (const k of ["listening", "friends", "social"]) {
+      assert.equal(ACTIONS[k], undefined, `${k} hâlâ katalogda`);
+    }
   });
 
   test("katalog SADECE uygulamada karşılığı olan yerleri içerir", () => {
@@ -107,7 +114,9 @@ describe("koç eylemleri", () => {
     //       örtüşüyordu; kaldırılınca bu test uyardı — istenen davranış)
     //   8 — dinleme eklendi (Beceriler'de gerçek bir ekranı vardı)
     //   7 — dinleme geçici olarak kapatıldı (kütüphane yetersiz)
-    assert.equal(Object.keys(ACTIONS).length, 7);
+    //   5 — Sosyal sekmesi uykuya alındı (friends + social); özellikler
+    //       çalışıyor ama karşı taraf yok
+    assert.equal(Object.keys(ACTIONS).length, 5);
   });
 
   test("eylem açıklamaları BOŞ olamaz — model neyi seçtiğini bilmeli", () => {
