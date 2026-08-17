@@ -386,7 +386,12 @@ export const ACTIONS = {
   swipe:    "Kelimeler bölümünde yeni kelime keşfet",
   practice: "Alıştırma turu yap (SRS tekrarları)",
   reading:  "Seviyene uygun bir okuma parçası oku",
-  listening: "Sınav biçiminde bir dinleme parçası dinle ve soruları cevapla",
+  // listening GEÇİCİ OLARAK ÇIKARILDI. Dinleme bölümü istemcide "çok yakında"
+  // olarak gösteriliyor (kütüphane dört parça; bitiren kullanıcı duvara
+  // çarpıyor). Burada bırakılsaydı koç, kapalı gösterilen bir bölüme
+  // yönlendiren bir plan yazabilirdi — kullanıcı için çelişki, bizim için
+  // takip edilmesi zor bir hata olurdu.
+  // Kütüphane büyüyünce geri eklenecek; ekran ve rota yerinde duruyor.
   scenario: "Senaryo provası yap (mülakat, market, doktor…)",
   grammar:  "Gramer dersi al: kural + örnekler + puanlanan alıştırma",
   friends:  "Arkadaş ekle (birlikte pratik için)",
