@@ -201,7 +201,14 @@ export function sozGecerli(prev, stats) {
 export async function weeklyReport({ profile, stats, prev = null, behaviour = "" }) {
   const pf = String(profile || "").slice(0, 900);
   const s = stats || {};
-  const dav = String(behaviour || "").slice(0, 500);
+  // SINIR 500 → 900. Ölçüldü: yoğun sürtünme yaşayan kullanıcıda davranış
+  // metni 629 karaktere çıkıyordu ve kesilen kısım en değerli yerdi —
+  // "kilitli moda dokundu", "paywall açtı abone olmadı" gibi niyet sinyalleri
+  // (bkz. app/src/core/learnerprofile.js). İstemci tarafında sürtünme en başa
+  // alındı, burada da tavan yükseltildi: sıralama tek başına yetmezdi,
+  // yalnızca kurbanı değiştirirdi.
+  // Bedeli ~100 token/rapor — haftada bir üretilen bir metin için önemsiz.
+  const dav = String(behaviour || "").slice(0, 900);
 
   // GEÇEN HAFTAYLA KIYAS. İnsanı hareket ettiren şey mutlak sayı değil YÖN.
   // "40 kelime öğrendin" tek başına bir şey ifade etmiyor; "geçen hafta 25'ti"
@@ -564,7 +571,8 @@ export async function coachReply({ profile, behaviour, plan, history, first, gap
   // NE YAPTIĞI. profile ne BİLDİĞİNİ anlatıyor; bu ne YAPTIĞINI. İkisi ayrı
   // bloklar çünkü koçun onlara farklı davranması gerekiyor: bilgi teşhis içindir,
   // davranış hesap sormak içindir. (bkz. app/src/core/learnerprofile.js)
-  const dav = String(behaviour || "").slice(0, 600);
+  // Sohbet tarafı da aynı sebeple yükseltildi (bkz. weeklyReport).
+  const dav = String(behaviour || "").slice(0, 900);
   const konusma = (Array.isArray(history) ? history : []).slice(-10)
     .map((m) => `${m.mine ? "Learner" : "Coach"}: ${String(m.text || "").slice(0, 300)}`)
     .join("\n");
