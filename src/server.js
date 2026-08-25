@@ -190,9 +190,17 @@ app.register(async function (appWs) {
           // (recap) ödül gibi gelir. Limit dolunca kapanış mesajı + özet sinyali gönderilir.
           if (room.aiTurns > AI_MAX_TURNS) {
             sockets.push(userId, { type: "typing_stop" });
+            // KAPANIŞ ROLDEN ÇIKMASIN. Senaryoda karşındaki bir garson ya da
+            // check-in görevlisi; oturum dolduğunda "That was a great
+            // conversation! Let's look at what you did well" diyen bir
+            // öğretmene dönüşüyordu. Provanın son cümlesi, provayı sohbet
+            // dersine çeviren cümle oluyordu. Sahneyi karakter kapatmalı.
+            const senaryoOdasi = room.aiCtx?.mode === "scenario";
             sockets.push(userId, {
               type: "chat", from: room.ai.id, name: room.ai.name, ai: true, ts: Date.now(),
-              text: "That was a great conversation! Let's stop here and look at what you did well. 👏",
+              text: senaryoOdasi
+                ? "Right, that's everything sorted. Thanks — have a good day! 👋"
+                : "That was a great conversation! Let's stop here and look at what you did well. 👏",
             });
             sockets.push(userId, { type: "ai_session_end", reason: "turn_limit" });
             return;

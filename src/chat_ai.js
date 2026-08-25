@@ -198,7 +198,16 @@ export async function generateRecap(messages, words, level, tasks = []) {
   const gorev = (Array.isArray(tasks) ? tasks : []).slice(0, 4)
     .map((t) => ({ id: String(t?.id || "").slice(0, 24), en: String(t?.en || "").slice(0, 120) }))
     .filter((t) => t.id && t.en);
-  const convo = (messages || []).slice(-16).map((m) => `${m.mine ? "Learner" : "Partner"}: ${String(m.text || "").slice(0, 200)}`).join("\n");
+  // PENCERE GÖREV VARSA GENİŞ.
+  //
+  // Burada gerçek bir ölçüm hatası vardı: son 16 mesaj alınıyordu, ama tur
+  // sınırı 22 (yani dolu bir prova ~44 mesaj). Görevlerin İLKİ neredeyse her
+  // zaman sohbetin başında yapılıyor — "kendini tanıt", "sipariş ver" — ve o
+  // mesajlar pencerenin dışında kaldığı için model onları GÖRMÜYORDU. Sonuç:
+  // kullanıcı görevi yapıyor, karnede ✗ alıyor ve değerlendirmeye güveni
+  // gidiyordu. Uzun bir provayı doğru puanlamanın tek yolu tamamını okumak.
+  const pencere = gorev.length ? 48 : 16;
+  const convo = (messages || []).slice(-pencere).map((m) => `${m.mine ? "Learner" : "Partner"}: ${String(m.text || "").slice(0, 200)}`).join("\n");
   const prompt = `You are a supportive English teacher. Below is a practice chat between a Turkish learner (CEFR ${lvl}) and a partner.
 Focus words: ${ws || "-"}.
 Analyze ONLY the Learner's messages. Return ONLY valid JSON:
