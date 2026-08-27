@@ -239,7 +239,7 @@ app.register(async function (appWs) {
           // Cevabı GARANTİ et: model boş dönerse/hata verirse yerel yedek gönderilir.
           // Eskiden bu yollarda yalnızca "typing_stop" gidiyordu → kullanıcı "yazıyor…"
           // görüp sonra hiçbir şey almıyordu ve sohbet sessizce ölüyordu.
-          const sendReply = ({ reply, suggestions, fallback }) => {
+          const sendReply = ({ reply, suggestions, fallback, done }) => {
             if (!getRoom(room.name)) return;              // oda kapandı → geç
             if (fallback) room.aiTurns = Math.max(0, room.aiTurns - 1);  // başarısız tur sayılmasın
             else {
@@ -247,15 +247,23 @@ app.register(async function (appWs) {
               room.aiHistory.push({ mine: false, text: reply });
               if (room.aiHistory.length > 20) room.aiHistory = room.aiHistory.slice(-20);
             }
+            // GOREV TIKLERI BIRIKIR, GERI ALINMAZ. Model her turda yalnizca
+            // kalanlara bakiyor; bir kez verilen tik sonraki turda kaybolamaz.
+            // Kullaniciya "yaptin" dedikten sonra geri almak, olcume olan guveni
+            // bir daha toplanmayacak sekilde kirar.
+            if (Array.isArray(done) && done.length) {
+              room.senaryoDone = [...new Set([...(room.senaryoDone || []), ...done])];
+            }
             sockets.push(userId, { type: "typing_stop" });
             sockets.push(userId, {
               type: "chat", from: room.ai.id, name: room.ai.name, text: reply, ts: Date.now(), ai: true,
               suggestions,                                   // 💡 dokunulabilir cevap önerileri
               turnsLeft: Math.max(0, AI_MAX_TURNS - room.aiTurns),
+              done: room.senaryoDone || [],                  // provada canli gorev tikleri
             });
           };
 
-          chatAI.generateReply(room.aiHistory, room.focusWords, room.level, room.ai.name, room.aiCtx)
+          chatAI.generateReply(room.aiHistory, room.focusWords, room.level, room.ai.name, room.aiCtx, room.senaryoDone || [])
             .then((r) => {
               if (r && r.reply) sendReply(r);
               else sendReply(chatAI.fallbackReply(room.focusWords, room.aiTurns));
@@ -808,6 +816,7 @@ app.post("/rooms/ai", async (req, reply) => {
   const botName = AI_BOT_NAMES[Math.floor(Math.random() * AI_BOT_NAMES.length)];
   const room = createAiRoom({ user: { userId, name: name || "Sen" }, level: level || "B1", focusWords, botName });
   room.aiCtx = ctx;   // sonraki cevaplar da aynı modda kalsın
+  room.senaryoDone = [];   // provada tamamlanan görevler; her turda büyür, küçülmez
   let opener = "";
   try { opener = await chatAI.generateOpener(focusWords, level || "B1", botName, ctx); }
   catch (_) { opener = chatAI.fallbackOpener(focusWords, botName); }

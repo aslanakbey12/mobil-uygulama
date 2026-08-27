@@ -89,9 +89,68 @@ const GRAMMAR = {
 };
 
 // İstemciden gelen ham değerleri GÜVENLİ bir bağlam nesnesine çevirir.
+// ── PROVA GÖREVLERİ (canlı takip) ───────────────────────────────────────────
+//
+// NEDEN BURADA DA VAR: aynı görevler istemcide de duruyor (app:
+// src/core/scenariotasks.js). Oradaki kopya TÜRKÇE ve kullanıcıya gösteriliyor;
+// karne de oradan gönderilen listeye göre doğrulanıyor. Buradaki kopya
+// İNGİLİZCE ve yalnızca modele: her turda "öğrenci SON mesajıyla hangi görevi
+// bitirdi" sorusunu sorabilmek için.
+//
+// NEDEN İSTEMCİDEN GÖNDERİLMİYOR: senaryo id'si dışında istemciden gelen hiçbir
+// serbest metin isteme girmiyor (istem enjeksiyonu kapısı). Görev metinleri de
+// isteme giriyor — dolayısıyla sabit ve sunucuda olmak zorunda.
+//
+// İD'LER İKİ TARAFTA AYNI OLMAK ZORUNDA. Ayrışırlarsa canlı tik sessizce
+// çalışmaz (istemci tanımadığı id'yi yok sayar), karne yine doğru kalır.
+// test/senaryogorev.test.js bu eşleşmeyi kilitliyor.
+export const SCENARIO_GOREV = {
+  interview: [
+    { id: "intro",    en: "introduce themselves with name, current role and years of experience" },
+    { id: "example",  en: "describe a strength and back it with a concrete past example" },
+    { id: "ask",      en: "ask a question about the team, the daily work or next steps" },
+  ],
+  meeting: [
+    { id: "opinion",  en: "state an opinion together with a reason" },
+    { id: "react",    en: "agree or politely disagree with what the other person said" },
+    { id: "propose",  en: "make a concrete proposal including what, who or when" },
+  ],
+  shopping: [
+    { id: "describe", en: "describe the item with at least two attributes (colour, size, type)" },
+    { id: "price",    en: "ask the price and react to it (too expensive, that's fine)" },
+    { id: "problem",  en: "ask for an alternative when unavailable, or ask about returns" },
+  ],
+  restaurant: [
+    { id: "order",    en: "order both a dish and a drink" },
+    { id: "prefer",   en: "state a preference, allergy or dietary need" },
+    { id: "bill",     en: "ask for the bill and say how they will pay" },
+  ],
+  airport: [
+    { id: "checkin",  en: "state their destination and check in" },
+    { id: "bag",      en: "ask about baggage allowance, weight or extra fees" },
+    { id: "gate",     en: "ask for the gate number or about a delay" },
+  ],
+  doctor: [
+    { id: "symptom",  en: "describe what hurts and what kind of pain it is" },
+    { id: "when",     en: "say when it started and what makes it worse" },
+    { id: "question", en: "ask about medication or how long recovery takes" },
+  ],
+  hotel: [
+    { id: "book",     en: "state their booking: how many nights and people" },
+    { id: "problem",  en: "report a room problem and ask for a solution" },
+    { id: "request",  en: "ask about late checkout, breakfast time or wifi" },
+  ],
+  smalltalk: [
+    { id: "self",     en: "say where they are from and what they do" },
+    { id: "ask",      en: "ask the other person about themselves" },
+    { id: "follow",   en: "ask a follow-up question based on their answer" },
+  ],
+};
+
 export function resolveMode({ mode, scenario, topic } = {}) {
   if (mode === "scenario" && SCENARIOS[scenario]) {
-    return { mode: "scenario", id: scenario, setting: rolMetni(SCENARIOS[scenario]) };
+    // gorev: canlı takip için — her turda "son mesajıyla hangisini bitirdi" sorulur.
+    return { mode: "scenario", id: scenario, setting: rolMetni(SCENARIOS[scenario]), gorev: SCENARIO_GOREV[scenario] || [] };
   }
   if (mode === "grammar" && GRAMMAR[topic]) {
     return { mode: "grammar", id: topic, focus: GRAMMAR[topic] };
@@ -266,9 +325,15 @@ ${convo}`;
 //
 // Karakterin kalıcı olmasının tek yolu her istekte yeniden söylenmesi: model
 // önceki istemi hatırlamıyor, yalnızca gönderdiğimizi biliyor.
-export async function generateReply(history, words, level, botName, ctx = null) {
+// yapilan: SUNUCUDA BİRİKEN görev listesi (server.js: room.senaryoDone).
+// Modele her turda yalnızca KALAN görevler soruluyor — hem istem kısalıyor hem
+// "zaten verilmiş tik" bir sonraki turda geri alınamıyor.
+export async function generateReply(history, words, level, botName, ctx = null, yapilan = []) {
   const lvl = ["A1", "A2", "B1", "B2", "C1", "C2"].includes(level) ? level : "B1";
   const senaryo = ctx?.mode === "scenario";
+  const tumGorev = senaryo && Array.isArray(ctx?.gorev) ? ctx.gorev : [];
+  const kalanGorev = tumGorev.filter((g) => !(yapilan || []).includes(g.id));
+  const provaBitti = tumGorev.length > 0 && kalanGorev.length === 0;
   const ws = (words || []).slice(0, 4).join(", ");
   const convo = (history || []).slice(-8).map((m) => `${m.mine ? "Learner" : botName}: ${m.text}`).join("\n");
   const kimlik = senaryo
@@ -307,11 +372,21 @@ SCOPE (important):
 SUGGESTIONS:
 - Also give 3 SHORT replies the learner could send next (2-6 words each, at ${lvl} level,
   natural answers to your question, varied). These help beginners who don't know what to write.
+${kalanGorev.length ? `
+MISSION TRACKING (invisible to the learner — never mention it):
+The learner is rehearsing this situation. These goals are still NOT done:
+${kalanGorev.map((g) => `  ${g.id}: ${g.en}`).join("\n")}
+Look ONLY at the learner's LAST message above. Return the ids of the goals that
+this one message CLEARLY completes. Be strict: half-done is not done, and a goal
+your character did instead of the learner is not done. Usually the array is empty.` : ""}${provaBitti ? `
+THE REHEARSAL IS COMPLETE: the learner has done everything they came here to do.
+Close the scene now, in character, in 1-2 sentences — the goodbye a real person in
+your role would say. Do not open a new topic and do not ask a new question.` : ""}
 
 Conversation so far:
 ${convo}
 
-Return ONLY JSON: {"reply": string, "suggestions": [string, string, string]}`;
+Return ONLY JSON: {"reply": string, "suggestions": [string, string, string]${kalanGorev.length ? ', "done": [goal ids from the last learner message]' : ""}}`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: { responseMimeType: "application/json", temperature: 0.9, maxOutputTokens: 1200, thinkingConfig: { thinkingBudget: 0 } },
@@ -326,6 +401,10 @@ Return ONLY JSON: {"reply": string, "suggestions": [string, string, string]}`;
   const suggestions = (Array.isArray(parsed.suggestions) ? parsed.suggestions : [])
     .map((s) => String(s || "").trim().replace(/^["'“”]+|["'“”]+$/g, "").slice(0, 40))
     .filter(Boolean).slice(0, 3);
+  // Model uydurursa diye SÜZÜLÜYOR: yalnızca gerçekten kalan görev id'leri geçer.
+  const done = (Array.isArray(parsed.done) ? parsed.done : [])
+    .map((x) => String(x || "").trim())
+    .filter((id) => kalanGorev.some((g) => g.id === id));
   if (!reply) throw new Error("AI boş yanıt döndü.");
-  return { reply, suggestions };
+  return { reply, suggestions, done };
 }
