@@ -162,6 +162,7 @@ app.register(async function (appWs) {
     sockets.register(userId, socket);
     socket.on("close", () => sockets.unregister(userId, socket));
     socket.on("message", (raw) => {
+      try {
       let msg;
       try { msg = JSON.parse(raw.toString()); } catch (e) { return; }
       if (!msg || !msg.roomName) return;
@@ -223,7 +224,25 @@ app.register(async function (appWs) {
 
           // Günlük AI kotası aşıldıysa yanıt üretme (maliyet koruması) ama kullanıcıyı
           // sessizlikte bırakma — ne olduğunu söyle.
-          if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
+          // BURADA `reply` DİYE BİR ŞEY YOK — BU SATIR SUNUCUYU DÜŞÜRÜYORDU.
+          // Burası bir WebSocket `socket.on("message")` geri çağrısı; kapsamda
+          // yalnızca (socket, req) var. HTTP uçlarındaki satır buraya olduğu gibi
+          // kopyalanmış (girinti bozukluğu da onu gösteriyor). Sınır aşılınca
+          // ReferenceError fırlıyor, yakalayıcı olmadığı için Node süreci ölüyor
+          // ve sunucu HERKES için kapanıyordu.
+          //
+          // ULAŞILABİLİRDİ: üstteki AI_MIN_GAP_MS kapısı 1,5 sn, yani dakikada 40
+          // mesaja izin veriyor; AI_RL_MAX ise 20. ~1,6 sn'de bir yazan sıradan
+          // bir kullanıcı 21. mesajda sunucuyu düşürüyordu. Kötü niyet gerekmiyor.
+          if (aiRateLimited(userId)) {
+            room.aiTurns = Math.max(0, room.aiTurns - 1);   // sayılmayan mesaj turu yakmasın
+            sockets.push(userId, { type: "typing_stop" });
+            sockets.push(userId, {
+              type: "chat", from: room.ai.id, name: room.ai.name, ai: true, ts: Date.now(),
+              text: "Slow down a little — I'm still catching up! 🙂",
+            });
+            return;
+          }
   if (!aiquota.underAiCap(userId)) {
             room.aiTurns = Math.max(0, room.aiTurns - 1);
             sockets.push(userId, { type: "typing_stop" });
@@ -307,6 +326,13 @@ app.register(async function (appWs) {
           if (r && r.error) sockets.push(userId, { type: "vr_error", error: r.error });
           return;
         }
+      }
+      } catch (e) {
+        // EMNİYET AĞI. Bu işleyicinin içindeki yakalanmamış HERHANGİ bir hata
+        // Node sürecini öldürüyor ve sunucu herkes için kapanıyor — nitekim tam
+        // öyle bir satır (WS kapsamında reply çağrısı) canlıda duruyordu.
+        // Tek kullanıcının tek mesajı, bütün sunucuyu düşürebilecek bir yol olmamalı.
+        app.log.error({ err: String((e && e.message) || e) }, "ws message isleyicisi hatasi");
       }
     });
   });
@@ -482,9 +508,14 @@ app.post("/word/image", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!images.imagesConfigured()) return reply.code(503).send({ error: "Görsel servisi yakında." });
+  if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   const { en, tr, definition } = req.body || {};
   if (!en) return reply.code(400).send({ error: "kelime gerekli" });
   const word = String(en).slice(0, 40);
+  // SÖZLÜK DIŞI RASTGELE DİZGE MODELE HİÇ GİTMESİN.
+  // Önbellek kelime bazında; uydurma dizge her seferinde ıska üretip
+  // Gemini + Pexels çağrısı doğuruyor ve word_images tablosunu şişiriyordu.
+  if (!/^[A-Za-z][A-Za-z'’ -]{0,39}$/.test(word)) return reply.code(400).send({ error: "geçersiz kelime" });
   try {
     // ── 1) KALICI ÖNBELLEK: YALNIZCA "fotoğraflanabilir mi" kararı için ──
     // Bellek içi önbellek her yeniden başlamada siliniyor; Render ücretsiz
@@ -500,7 +531,11 @@ app.post("/word/image", async (req, reply) => {
     // ── 2) AI'ya sor: fotoğraflanabilir mi + doğru arama terimi ne? ──
     // (AI yoksa/hata verirse eski davranışa — ham kelimeyle arama — düşülür.)
     let q = kayitli?.query || null;
-    if (!q && reading.readingConfigured()) {
+    // KOTA BURADA YANAR, ÖNBELLEK ISKASI OLDUĞUNDA. Kota dolduysa modele hiç
+    // gitmiyoruz; davranış "AI erişilemedi" yolunun aynısı (ham kelimeyle arama),
+    // yani kullanıcı boş ekran değil daha zayıf bir sonuç görüyor.
+    if (!q && reading.readingConfigured() && aiquota.underAiCap(userId)) {
+      aiquota.bumpAi(userId);
       try {
         const iq = await reading.imageQueryFor(word, tr, definition);
         // Soyut/işlev kelimesi → alakasız foto göstermektense HİÇ gösterme.
