@@ -351,6 +351,11 @@ app.addHook("onRequest", async (req, reply) => {
 
 app.get("/health", async () => ({
   ok: true,
+  // HANGİ SÜRÜM ÇALIŞIYOR. Deploy sonrası "indi mi" sorusunun tek dürüst
+  // cevabı buydu ve yoktu: /health hep aynı şeyi döndürdüğü için eski kod da
+  // yeni kod da aynı görünüyordu. Render commit sha'yı ortama kendisi
+  // koyuyor; yerelde tanımsız kalır ve "dev" yazar.
+  surum: (process.env.RENDER_GIT_COMMIT || "dev").slice(0, 7),
   auth: authConfigured(),
   supabase: supaConfigured(),
   livekit: livekitConfigured(),
