@@ -588,7 +588,11 @@ app.post("/coach/weekly", async (req, reply) => {
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   const { profile, stats, behaviour } = req.body || {};
   try {
-    const out = await coach.getOrCreateReport(userId, { profile, stats, behaviour });
+    // Kademe SUNUCUDAN okunuyor, istemciden gelen bir bayraktan değil: rapor
+    // sıklığı artık buna bağlı ve istemcinin söylediğine güvenmek onu bedava
+    // haftalık rapora çevirirdi.
+    const premium = await isPremium(userId);
+    const out = await coach.getOrCreateReport(userId, { profile, stats, behaviour, premium });
     // Kota SADECE gerçekten üretim yapıldıysa harcanır. Önbellekten dönen rapor
     // hiçbir YZ çağrısı yapmıyor; onu da saymak kullanıcıyı kendi raporuna
     // bakmaktan caydırırdı.

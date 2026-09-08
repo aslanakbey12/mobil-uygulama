@@ -7,7 +7,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-const { weekKey, raporHaftasi, sozGecerli, ACTIONS, notesDue } = await import("../src/coach.js");
+const { weekKey, raporHaftasi, sozGecerli, ACTIONS, notesDue, aralikliRapor } = await import("../src/coach.js");
 
 // RAPORUN HAFTASI = BİTMİŞ hafta.
 //
@@ -202,5 +202,46 @@ describe("geçen haftanın planı geçerli mi", () => {
   test("bozuk girdide çökmez", () => {
     assert.equal(sozGecerli(null, null), false);
     assert.equal(sozGecerli(null, { prevPlan: { week: "abc", steps: "dizi değil" } }), false);
+  });
+});
+
+// ── ÜCRETSİZ KADEMEDE RAPOR İKİ HAFTADA BİR ────────────────────────────────
+//
+// Haftalık rapor kullanıcı+hafta başına önbellekli, yani PAYLAŞILMIYOR: okuma
+// parçasının aksine maliyeti kullanıcı sayısıyla doğrusal büyüyor ve hiç
+// amortize olmuyor. Raporu premium'a kapatmak yerine ücretsizde sıklığı
+// düşürüldü — kimse duvara toslamıyor, herkes raporunu alıyor.
+//
+// Kural saf: geçen haftanın raporu duruyorsa bu hafta üretme.
+describe("ücretsiz kademede rapor sıklığı", () => {
+  const wk = "2026-09-07";          // pazartesi
+  const onceki = "2026-08-31";      // bir önceki pazartesi
+  const rapor = { headline: "geçen haftanın raporu" };
+
+  test("geçen haftanın raporu varsa bu hafta üretilmez", () => {
+    const g = aralikliRapor(wk, [{ week: onceki, stats: {}, report: rapor }]);
+    assert.equal(g?.report, rapor);
+    assert.equal(g?.week, onceki);
+  });
+
+  test("geçen hafta rapor yoksa üretilir — dönüşümlü olmasının sebebi bu", () => {
+    // İki hafta önce var, geçen hafta yok: atlanan haftadan sonra sıra geldi.
+    assert.equal(aralikliRapor(wk, [{ week: "2026-08-24", stats: {}, report: rapor }]), null);
+    assert.equal(aralikliRapor(wk, []), null);
+  });
+
+  test("geçmişte yalnız istatistik varsa rapor sayılmaz", () => {
+    // Gösterilecek metin yok; bu haftayı da atlarsak kullanıcı boş ekran görür.
+    assert.equal(aralikliRapor(wk, [{ week: onceki, stats: { activeDays: 3 }, report: null }]), null);
+  });
+
+  test("bozuk geçmişte çökmez", () => {
+    assert.equal(aralikliRapor(wk, null), null);
+    assert.equal(aralikliRapor(wk, [null, undefined]), null);
+  });
+
+  test("aranan hafta TAM bir önceki hafta — iki hafta öncesi tutmaz", () => {
+    // Sınır: 8 gün önce değil, tam 7. Yanlış hesap sıklığı sessizce bozardı.
+    assert.equal(aralikliRapor(wk, [{ week: "2026-09-01", stats: {}, report: rapor }]), null);
   });
 });

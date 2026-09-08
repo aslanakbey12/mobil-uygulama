@@ -89,6 +89,19 @@ export function raporHaftasi(now = new Date()) {
   return weekKey(new Date(new Date(now).getTime() - 7 * 86400000));
 }
 
+// ÜCRETSİZ KADEMENİN ARA HAFTASI MI?
+//
+// Karar veritabanına dokunmadan verilebilsin diye ayrı duruyor: getOrCreateReport
+// Supabase olmadan çalışmıyor, oysa asıl kural saf ve testi burada.
+//
+// Geçen haftanın raporu duruyorsa bu hafta üretilmez, o rapor gösterilmeye devam
+// eder. Üretilen ve atlanan haftalar böylece dönüşümlü oluyor. Rapor metni
+// OLMAYAN geçmiş satırı (yalnız istatistik) sayılmaz — gösterilecek bir şey yok.
+export function aralikliRapor(wk, history) {
+  const onceki = weekKey(new Date(Date.parse(wk) - 7 * 86400000));
+  return (history || []).find((h) => h && h.week === onceki && h.report) || null;
+}
+
 // Kayıtlı raporu getir (varsa).
 export async function loadReport(userId, wk) {
   const db = supa();
@@ -742,7 +755,7 @@ Set "plan" ONLY at the PLAN stage, and only once the goal is genuinely clear. Ot
 //
 // HAFTA = BİTMİŞ HAFTA (raporHaftasi). İstemci de rakamları o pencere için
 // hesaplıyor; ikisi ayrışırsa rapor yine kendi rakamlarıyla çelişir.
-export async function getOrCreateReport(userId, { profile, stats, behaviour }) {
+export async function getOrCreateReport(userId, { profile, stats, behaviour, premium = false }) {
   const wk = raporHaftasi();
   // GEÇMİŞ VE AKRAN her zaman taze getiriliyor — rapor önbellekten gelse bile.
   // Rapor metni hafta boyunca sabit kalmalı (yoksa kullanıcı her açtığında
@@ -754,6 +767,34 @@ export async function getOrCreateReport(userId, { profile, stats, behaviour }) {
   ]);
   const kayitli = await loadReport(userId, wk);
   if (kayitli) return { report: kayitli, week: wk, cached: true, history, peer };
+
+  // ÜCRETSİZDE RAPOR İKİ HAFTADA BİR — SIKLIK, KAPI DEĞİL.
+  //
+  // Haftalık rapor kullanıcı ve hafta başına önbellekli, yani PAYLAŞILMIYOR:
+  // okuma parçasının aksine maliyeti kullanıcı sayısıyla doğrusal büyüyor ve
+  // hiç amortize olmuyor. Ücretsiz kullanıcıya da verdiğimiz için de ödenmemiş
+  // bir gider (bkz. REPORT_MODEL seçiminin gerekçesi).
+  //
+  // Çözüm olarak raporu premium'a KAPATMADIK. Kapatmak bugün ücretsiz olan bir
+  // şeyi geri almak olurdu ve koçun tek satmaya çalıştığı şey kullanıcıyı
+  // tanıması — onu tanıdığımızı hiç göstermeden abone olmasını beklemek
+  // sırayı ters çevirir. Sıklığı düşürmek kimseyi duvara toslatmıyor:
+  // kullanıcı raporunu yine alıyor, iki haftada bir alıyor.
+  //
+  // ÖNEMLİ: bu değişiklik IAP canlı olmadan da güvenli. Kota koysaydık ücretsiz
+  // kullanıcı "premium al" duvarına toslar ama satın alamazdı (çıkmaz sokak);
+  // burada duvar yok, herkes raporunu alıyor.
+  //
+  // Kural: geçen haftanın raporu duruyorsa bu hafta üretme, onu göstermeye
+  // devam et. Böylece üretilen/atlanan haftalar dönüşümlü oluyor. `history`
+  // zaten `lte(week, wk)` ile geldiği için ek sorgu yok.
+  if (!premium) {
+    const gecen = aralikliRapor(wk, history);
+    // Hafta anahtarı DA geçen haftanınki dönüyor: istemci raporun hangi haftayı
+    // anlattığını yazıyor, bu haftanın anahtarıyla göndermek yalan olurdu.
+    if (gecen) return { report: gecen.report, week: gecen.week, cached: true, aralikli: true, history, peer };
+  }
+
   const prev = await loadPrevStats(userId, wk);
 
   // HİÇ VERİ YOKSA RAPOR ÜRETME.
