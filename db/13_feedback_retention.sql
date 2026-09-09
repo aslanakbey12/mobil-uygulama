@@ -68,6 +68,14 @@ begin
     delete from public.reading_cache where last_hit_at < now() - interval '180 days';
   end if;
 
+  -- Örnek cümle önbelleği: 365 gündür hiç kullanılmamış cümleler
+  -- (db/20_example_cache.sql). Okuma parçasıyla aynı gerekçe — silinen her
+  -- satır bir daha PARA ÖDENEREK üretilir — ama cümleler çok daha küçük
+  -- olduğu için süre daha uzun tutuldu.
+  if to_regclass('public.example_cache') is not null then
+    delete from public.example_cache where last_hit_at < now() - interval '365 days';
+  end if;
+
   -- Koç sohbetleri: 1 yıl dokunulmamışsa sil. Sohbet içeriği kullanıcının en
   -- mahrem verisi; ilerleme geçmişi kadar uzun tutmaya gerek yok.
   if to_regclass('public.coach_chats') is not null then

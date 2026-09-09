@@ -535,12 +535,63 @@ Return ONLY JSON: {"depictable": boolean, "query": string}`;
   return out;
 }
 
+// ── ÖRNEK CÜMLE: BAĞLAM KAPALI BİR LİSTE ───────────────────────────────────
+//
+// İstemcinin gönderdiği `context` serbest metin DEĞİL: app/src/core/store.js
+// personalContext() bunu ilgi alanı ve motivasyon etiketlerinden seçiyor.
+// Sunucu yine de doğruluyor ve tanımadığını "günlük hayat"a düşürüyor.
+//
+// Sebep önbelleğin kalıcı hale gelmesi. Anahtar artık veritabanında yaşıyor;
+// serbest metin anahtara girseydi her çağrıda benzersiz bir bağlam gönderen
+// bir istemci önbelleği işe yaramaz hale getirir, tabloyu şişirir ve her
+// seferinde bize PARA ÖDETİRDİ. Kapalı liste anahtar uzayını sonlu tutuyor.
+//
+// LİSTE İSTEMCİYLE AYNI OLMAK ZORUNDA. Orada yeni bir ilgi alanı eklenip
+// buraya eklenmezse cümleler sessizce "günlük hayat" bağlamına düşer — hata
+// vermez, yalnızca kişiselleştirme kaybolur. Testte iki tarafın sayısı pinli.
+export const BAGLAMLAR = new Set([
+  // INTEREST_LABEL
+  "teknoloji", "iş dünyası", "seyahat", "spor", "yemek", "bilim",
+  "sanat ve müzik", "oyunlar", "sağlık", "dizi ve film", "doğa", "günlük hayat",
+  // MOTIVE_LABEL (seyahat / dizi ve film yukarıda zaten var)
+  "iş", "sınav", "okul", "kişisel gelişim",
+]);
+export const baglamCoz = (c) => {
+  const s = String(c || "").toLowerCase().trim();
+  return BAGLAMLAR.has(s) ? s : "günlük hayat";
+};
+
+// Kalıcı katman — 18_reading_cache ile aynı desen, aynı gerekçe. Hatalar
+// yutuluyor: önbellek bir HIZLANDIRMA, DB arızası cümle üretimini çökertmemeli.
+async function ornekGet(key) {
+  const db = supa();
+  if (!db) return null;
+  try {
+    const { data, error } = await db.from("example_cache").select("example").eq("key", key).maybeSingle();
+    if (error || !data?.example) return null;
+    db.rpc("touch_example_cache", { k: key }).then(() => {}, () => {});   // sayaç: bekleme
+    return data.example;
+  } catch (_) { return null; }
+}
+
+async function ornekPut(key, example) {
+  const db = supa();
+  if (!db) return;
+  try { await db.from("example_cache").upsert({ key, example, last_hit_at: new Date().toISOString() }); }
+  catch (_) { /* yazamamak cümleyi geçersiz kılmaz — bir dahakine yeniden üretilir */ }
+}
+
 const exampleCache = new Map();
+const ORNEK_BELLEK_CAP = 5000;   // yalnızca BELLEK katmanı; kalıcı katman sınırsız
 export async function generateExample(en, tr, level, context) {
   const lvl = ["A1", "A2", "B1", "B2", "C1", "C2"].includes(level) ? level : "B1";
-  const ctx = String(context || "günlük hayat").toLowerCase().slice(0, 40);
+  const ctx = baglamCoz(context);
   const key = `${String(en).toLowerCase()}|${lvl}|${ctx}`;
   if (exampleCache.has(key)) return exampleCache.get(key);
+  // KALICI KATMAN. Süreç yeni başlamış olsa bile başka bir kullanıcının (ya da
+  // bu kullanıcının geçen haftaki oturumunun) ürettiği cümle burada duruyor.
+  const kalici = await ornekGet(key);
+  if (kalici?.en) { bellegeKoy(key, kalici); return kalici; }
   if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const prompt = `Write ONE natural English example sentence at CEFR level ${lvl} that clearly uses the word "${en}" (Turkish meaning: ${tr}).
 Context/topic: ${ctx}. Keep it short (max 14 words), natural, and make the word's meaning clear from context.
@@ -554,9 +605,14 @@ Return ONLY JSON: {"en": string, "tr": string}`;
   let parsed; try { parsed = JSON.parse(extractJson(txt)); } catch (e) { throw new Error("AI yanıtı çözümlenemedi."); }
   const out = { en: String(parsed.en || "").slice(0, 200).trim(), tr: String(parsed.tr || "").slice(0, 200).trim() };
   if (!out.en) throw new Error("Örnek cümle üretilemedi.");
-  if (exampleCache.size >= 5000) exampleCache.delete(exampleCache.keys().next().value);
-  exampleCache.set(key, out);
+  bellegeKoy(key, out);
+  ornekPut(key, out).catch(() => {});   // yazmayı BEKLEME: cümle hazır
   return out;
+}
+
+function bellegeKoy(key, out) {
+  if (exampleCache.size >= ORNEK_BELLEK_CAP) exampleCache.delete(exampleCache.keys().next().value);
+  exampleCache.set(key, out);
 }
 
 export async function generatePassage(level, words, opts = {}) {
