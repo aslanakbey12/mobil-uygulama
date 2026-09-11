@@ -46,7 +46,12 @@ export const UTIL_MODEL = process.env.UTIL_MODEL || "deepseek/deepseek-v4-pro";
 // (2) ücretsiz kullanıcı günde 20 Gemini üretimi yapabiliyordu — vaat edilenin
 // 20 katı ve ölçekte karşılanamaz bir maliyet.
 // Her parça bir YZ çağrısıdır; bu yüzden premium de "sınırsız" değil, yüksek tavanlı.
-const DAILY_CAP = parseInt(process.env.READING_DAILY_CAP || "3", 10);
+// GÜNDE BİR (11 Eylül 2026). Kapı kalktı: istemci artık ilk günden, hiç
+// kelimesi olmayan kullanıcıya da parça üretiyor (seviyesinin en sık
+// kelimeleriyle). Herkes okuyabildiğine göre tavan da ona göre düşük.
+// İstemcideki config.OKUMA_GUNLUK_HAK ile AYNI olmalı — istemci bunu yalnızca
+// gösteriyor ("bugün 1 hakkın var"), sınır burada.
+const DAILY_CAP = parseInt(process.env.READING_DAILY_CAP || "1", 10);
 const DAILY_CAP_PREMIUM = parseInt(process.env.READING_DAILY_CAP_PREMIUM || "30", 10);
 
 export function dailyCapFor(premium = false) {

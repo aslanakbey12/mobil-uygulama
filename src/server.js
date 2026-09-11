@@ -407,7 +407,7 @@ app.post("/reading/generate", async (req, reply) => {
     return reply.code(429).send({
       error: readPremium
         ? "Bugünlük okuma hakkın doldu, yarın tekrar dene."
-        : `Bugünlük okuma hakkın doldu (günde ${reading.dailyCapFor(false)}). Premium ile günde ${reading.dailyCapFor(true)} parça oluşturabilirsin.`,
+        : `Bugünlük okuma hakkın doldu (günde ${reading.dailyCapFor(false)}). Yarın yeni bir parça seni bekliyor.`,
       upgrade: !readPremium,
     });
   }
