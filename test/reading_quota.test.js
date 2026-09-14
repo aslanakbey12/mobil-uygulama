@@ -57,3 +57,18 @@ describe("okuma kotası — kademe", () => {
     assert.equal(reading.underDailyCap(u), false);
   });
 });
+
+// ── KALICILIK ─────────────────────────────────────────────────────────────────
+// Sayaç eskiden reading.js içinde ayrı bir bellek-içi Map'ti; aiquota'nın
+// yükle/yaz döngüsünün dışında kaldığı için Render her uyanışta hakkı yeniden
+// veriyordu. Artık aiquota'nın 'reading' türü: flush'a girer, load'dan gelir.
+const q = await import("../src/aiquota.js");
+describe("okuma kotası — kalıcılık", () => {
+  test("bumpDaily aiquota'nın 'reading' sayacını artırır (flush'a girecek olan bu)", () => {
+    const u = uid();
+    reading.bumpDaily(u);
+    reading.bumpDaily(u);
+    assert.equal(q.readingUsedToday(u), 2);
+    assert.equal(reading.remainingToday(u, true), reading.dailyCapFor(true) - 2);
+  });
+});

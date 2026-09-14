@@ -37,3 +37,19 @@ export function aiRateLimited(userId) {
   if (aiHits.size > 5000) { for (const [k, v] of aiHits) if (now > v.reset) aiHits.delete(k); }
   return e.count > AI_MAX;
 }
+
+// ── GENEL: KOVA + KULLANICI BAŞINA sınır ──────────────────────────────────────
+// Ucuz ama sınırsız bırakılamayacak uçlar için (örn. /client-error). YZ kovasını
+// paylaşmasın diye ayrı: hata raporu atan istemci koç sohbet hakkını yememeli.
+const buckets = new Map(); // "bucket|userId" -> { count, reset }
+
+export function perUserLimited(bucket, userId, max, windowMs = WINDOW_MS) {
+  if (!userId) return false;
+  const now = Date.now();
+  const key = bucket + "|" + userId;
+  let e = buckets.get(key);
+  if (!e || now > e.reset) { e = { count: 0, reset: now + windowMs }; buckets.set(key, e); }
+  e.count++;
+  if (buckets.size > 5000) { for (const [k, v] of buckets) if (now > v.reset) buckets.delete(k); }
+  return e.count > max;
+}

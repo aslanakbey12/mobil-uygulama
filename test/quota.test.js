@@ -99,3 +99,16 @@ describe("ratelimit — IP sınırı", () => {
     assert.equal(blocked, true, "yoğun istek eninde sonunda kesilmeliydi");
   });
 });
+
+describe("ratelimit — kova + kullanıcı başına (perUserLimited)", () => {
+  test("kendi kovasında sınırı uygular, YZ kovasına dokunmaz", () => {
+    const u = "u_pul_" + Math.random();
+    for (let i = 0; i < 3; i++) assert.equal(rl.perUserLimited("client-error", u, 3), false, `${i + 1}. geçmeliydi`);
+    assert.equal(rl.perUserLimited("client-error", u, 3), true, "4. kesilmeliydi");
+    assert.equal(rl.aiRateLimited(u), false, "hata raporu YZ hakkını yememeli");
+    assert.equal(rl.perUserLimited("baska", u, 3), false, "kovalar ayrı");
+  });
+  test("kimliksiz çağrı sınırlanmaz (kapı 401 ile ayrıca kapalı)", () => {
+    for (let i = 0; i < 10; i++) assert.equal(rl.perUserLimited("client-error", null, 1), false);
+  });
+});

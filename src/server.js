@@ -1,6 +1,7 @@
 // Sesli tartışma odaları — eşleştirme + LiveKit token + moderasyon servisi.
 // Kimlik: Supabase JWT (üretim) ya da dev yedeği (userId body/query/header).
 import Fastify from "fastify";
+import { timingSafeEqual } from "node:crypto";
 import websocket from "@fastify/websocket";
 import { originIzinli } from "./cors.js";
 import * as mm from "./matchmaking.js";
@@ -15,7 +16,8 @@ import * as chatAI from "./chat_ai.js";
 import * as aiquota from "./aiquota.js";
 import { moderateChat } from "./textsafety.js";
 import { sendPush } from "./push.js";
-import { rateLimited, aiRateLimited } from "./ratelimit.js";
+import { rateLimited, aiRateLimited, perUserLimited } from "./ratelimit.js";
+const CLIENT_ERROR_MAX = parseInt(process.env.CLIENT_ERROR_RL_MAX || "10", 10);   // dakikada 10 rapor/kullanıcı
 
 // AI sohbet sınırları — maliyet + pedagoji (oturumun net bir sonu olsun).
 const AI_MAX_TURNS = parseInt(process.env.AI_CHAT_MAX_TURNS || "22", 10);   // tur limiti → sonra ders özeti
@@ -42,6 +44,15 @@ import { getRoom, roomStats, leaveRoom, createHostedRoom, getRoomByCode, addMemb
 // Logger: istek URL'lerindeki token/access_token query paramlarını REDAKTE et.
 // (WS ve klip indirme token'ı query ile geçiyor → düz loglanırsa kısa ömürlü de olsa sızar.)
 const app = Fastify({
+  // Render bir ters proxy: bu olmadan req.ip = yük dengeleyicinin adresi, yani
+  // TÜM kullanıcılar IP başına rate limit'te TEK kovayı paylaşıyordu — kimliksiz
+  // bir betik dakikada 240 istekle herkesi 429'a düşürebilirdi. Render
+  // X-Forwarded-For gönderir; Fastify ilk (istemci) adresi req.ip yapar.
+  // `true` (hop sayısı değil) BİLİNÇLİ: hop sayısı Render'ın önüne ikinci bir
+  // vekil girerse herkesi sessizce yine tek kovaya düşürür; `true` ile en kötü
+  // durum, saldırganın sahte başlıkla kendi sınırını aşması — başkasını
+  // kesemez. fastify ≥ 5.12.1 (GHSA-3m5p-2c4r-xxw2) şart, package.json'da.
+  trustProxy: true,
   // Gövde sınırı: /progress istemciden büyük bir jsonb alıyor (ağır kullanıcıda
   // ~700 KB). Fastify varsayılanı 1 MB — sınıra dayanıyorduk. Bilinçli 2 MB:
   // ağır kullanıcıya yer bırakır, keyfi büyük gövdeyi yine reddeder.
@@ -1101,12 +1112,16 @@ app.post("/push/register", async (req, reply) => {
 });
 
 // ── İstemci çökme/hata raporu (hafif crash reporting — Sentry'ye kadar sunucu logu) ──
+// KİMLİKLİ ve kullanıcı başına sınırlı: kimliksizken her istek 2,5 KB log
+// yazıyordu — tek IP Render log kotasını doldurup gerçek hataları gömebilirdi.
 app.post("/client-error", async (req, reply) => {
   const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (perUserLimited("client-error", userId, CLIENT_ERROR_MAX)) return reply.code(429).send({ error: "çok fazla rapor" });
   const { message, stack, screen, version } = req.body || {};
   app.log.error({
     userId, screen: String(screen || "").slice(0, 60), version: String(version || "").slice(0, 20),
-    message: String(message || "").slice(0, 500), stack: String(stack || "").slice(0, 2000),
+    message: String(message || "").slice(0, 500), stack: String(stack || "").slice(0, 1000),
   }, "client-error");
   return { ok: true };
 });
@@ -1321,6 +1336,13 @@ app.post("/friends/invites/clear", async (req, reply) => {
   return { ok: true };
 });
 
+// Sabit zamanlı dize eşitliği: uzunluk farkını da sızdırmamak için önce
+// uzunluk kontrolü, sonra Buffer karşılaştırması.
+function tokenEsit(a, b) {
+  const x = Buffer.from(String(a || ""), "utf8"), y = Buffer.from(String(b || ""), "utf8");
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
 // RevenueCat webhook → premium durumunu güncelle
 // (RevenueCat'te app_user_id = Supabase user id olacak şekilde ayarla)
 app.post("/webhooks/revenuecat", async (req, reply) => {
@@ -1328,7 +1350,8 @@ app.post("/webhooks/revenuecat", async (req, reply) => {
   const rcToken = process.env.REVENUECAT_WEBHOOK_TOKEN;
   // FAIL-CLOSED: token yapılandırılmamışsa DA reddet. (Eskiden token yoksa kontrol atlanıyordu
   // → herkes app_user_id yollayıp kendine/başkasına premium yazabiliyordu.)
-  if (!rcToken || auth !== `Bearer ${rcToken}`) {
+  // Sabit zamanlı karşılaştırma: ücretsiz premium yazma yolu tek bu kontrole dayanıyor.
+  if (!rcToken || !tokenEsit(auth, `Bearer ${rcToken}`)) {
     return reply.code(401).send({ error: "yetkisiz" });
   }
   const ev = req.body?.event || {};

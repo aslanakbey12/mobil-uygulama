@@ -58,7 +58,7 @@ export function dailyCapFor(premium = false) {
   return premium ? DAILY_CAP_PREMIUM : DAILY_CAP;
 }
 
-import { underGlobalCap, bumpGlobal } from "./aiquota.js";
+import { underGlobalCap, readingUsedToday, bumpReading } from "./aiquota.js";
 
 // YAPILANDIRILMIŞ MI = "ÇAĞIRABİLECEĞİM BİR SAĞLAYICI VAR MI".
 //
@@ -111,7 +111,6 @@ export async function listModels() {
 // tasarruf bu. (bkz. db/18_reading_cache.sql)
 const cache = new Map();       // `${seviye}|${tema}|${kelimeler}` -> passage
 const CACHE_CAP = 500;         // yalnızca BELLEK katmanı için; kalıcı katman sınırsız
-const daily = new Map();       // userId -> { day, n }
 
 // Kalıcı katmandan oku. Hata yutulur: önbellek bir HIZLANDIRMA, arıza halinde
 // parça yine üretilir — DB sorunu okumayı çökertmemeli.
@@ -139,28 +138,22 @@ async function cacheDrop(key) {
   try { await db.from("reading_cache").delete().eq("key", key); } catch (_) { /* yok say */ }
 }
 
-function today() { return new Date().toISOString().slice(0, 10); }
-
 // Kullanıcı tavanının yanında SİSTEM GENELİ freni de kontrol edilir
 // (bkz. aiquota.js — kullanıcı başına tavanlar tek başına toplam harcamayı sınırlamıyordu).
+// Sayaç aiquota'da yaşar: kalıcı (ai_usage, kind='reading'), süreç yeniden
+// başlayınca sıfırlanmaz. Buradaki eski bellek-içi Map, Render'ın her uyanışında
+// günlük hakkı yeniden veriyordu.
 export function underDailyCap(userId, premium = false) {
   if (!underGlobalCap()) return false;
-  const e = daily.get(userId);
-  if (!e || e.day !== today()) return true;
-  return e.n < dailyCapFor(premium);
+  return readingUsedToday(userId) < dailyCapFor(premium);
 }
 
 // Kullanıcının bugün kaç hakkı kaldı (arayüzde dürüstçe göstermek için).
 export function remainingToday(userId, premium = false) {
-  const e = daily.get(userId);
-  const used = e && e.day === today() ? e.n : 0;
-  return Math.max(0, dailyCapFor(premium) - used);
+  return Math.max(0, dailyCapFor(premium) - readingUsedToday(userId));
 }
 export function bumpDaily(userId) {
-  bumpGlobal(1);
-  const d = today(); const e = daily.get(userId);
-  if (!e || e.day !== d) daily.set(userId, { day: d, n: 1 });
-  else e.n++;
+  bumpReading(userId, 1);
 }
 
 // Seviyeye göre uzunluk; hedef kelime sayısına göre tekrar aralığı (metin tıka basa olmasın).

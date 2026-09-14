@@ -16,7 +16,7 @@ const FLUSH_MS = parseInt(process.env.AI_QUOTA_FLUSH_MS || "60000", 10);
 function today() { return new Date().toISOString().slice(0, 10); }
 
 // kind -> Map(userId -> { day, n })
-const mem = { ai: new Map(), translate: new Map() };
+const mem = { ai: new Map(), translate: new Map(), reading: new Map() };
 let globalDay = today();
 let globalN = 0;
 const dirty = new Set();          // "kind|userId" — yazılmayı bekleyenler
@@ -79,6 +79,24 @@ export function bumpTranslate(userId, n = 1) {
   if (!userId) return;
   get("translate", userId).n += n;
   dirty.add("translate|" + userId);
+}
+
+// ── OKUMA SAYACI ──────────────────────────────────────────────────────────────
+// Tavan reading.js'te (ücretsiz/premium kademesi orada); burası yalnızca SAYAÇ.
+// NEDEN BURADA: okuma sayacı reading.js içinde ayrı bir bellek-içi Map'ti ve
+// yukarıdaki kalıcılığın dışında kalmıştı — Render her uykudan uyanışta ve her
+// dağıtımda sıfırlıyordu. Ücretsiz kullanıcı günlük hakkını bitirip sunucu
+// uyuyunca yeniden alıyordu; premium'un ana farkı (1 → 30) fiilen yoktu.
+// ai_usage tablosu 'reading' türünü baştan beri kabul ediyor (db/12_perf_quota.sql).
+export function readingUsedToday(userId) {
+  if (!userId) return 0;
+  return get("reading", userId).n;
+}
+export function bumpReading(userId, n = 1) {
+  bumpGlobal(n);
+  if (!userId) return;
+  get("reading", userId).n += n;
+  dirty.add("reading|" + userId);
 }
 
 // ── KALICILIK ─────────────────────────────────────────────────────────────────
