@@ -52,7 +52,9 @@ export const UTIL_MODEL = process.env.UTIL_MODEL || "deepseek/deepseek-v4-pro";
 // İstemcideki config.OKUMA_GUNLUK_HAK ile AYNI olmalı — istemci bunu yalnızca
 // gösteriyor ("bugün 1 hakkın var"), sınır burada.
 const DAILY_CAP = parseInt(process.env.READING_DAILY_CAP || "1", 10);
-const DAILY_CAP_PREMIUM = parseInt(process.env.READING_DAILY_CAP_PREMIUM || "30", 10);
+// 17 Eyl 2026: 30 → 5. Kimse günde beşten fazla parça okumuyor; 30 yalnızca
+// maliyet riskiydi (30 × 30 gün = kullanıcı başına ayda 900 çağrı olasılığı).
+const DAILY_CAP_PREMIUM = parseInt(process.env.READING_DAILY_CAP_PREMIUM || "5", 10);
 
 export function dailyCapFor(premium = false) {
   return premium ? DAILY_CAP_PREMIUM : DAILY_CAP;
