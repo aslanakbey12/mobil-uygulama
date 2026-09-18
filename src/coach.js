@@ -168,6 +168,17 @@ export async function loadHistory(userId, wk, n = 8) {
 // büyüyene kadar kendiliğinden kapalı kalır.
 const AKRAN_ESIK = 30;
 
+// ── HAFTALIK PLAN KAPALI (18 Eyl 2026, kullanıcı kararı) ────────────────────
+// Rapor "bu haftanın planı" diye üç adım yazıyor, istemci her adımı düğme
+// yapıyordu. Kapatılma sebebi: koç sohbeti kapalıyken plan tek yönlü bir
+// reçeteye dönüştü ve kullanıcının hedefinden ("sunum becerisi") uyuyan
+// bölümlere ("senaryo başlat") adım üretti. Rapor teşhis olarak kalıyor:
+// başlık, kıyas, iyi giden, yavaşlatan, odak. Adım yok, geçen haftanın sözü
+// sorgulanmıyor (followup boş). İstemcideki eşi config.HAFTALIK_PLAN_ACIK;
+// ikisi BİRLİKTE açılır — biri açık biri kapalıyken rapor metni plana atıf
+// yapar, ekranda plan görünmez.
+const HAFTALIK_PLAN = false;
+
 export async function loadPeer(wk, level) {
   const db = supa();
   if (!db || !level) return null;
@@ -280,7 +291,7 @@ export async function weeklyReport({ profile, stats, prev = null, behaviour = ""
   // (damgası tam 7 gün önceki hafta olmalı). Yanlış haftanın planına
   // "sana şunu söylemiştim" demek, hiç söylememekten kötü: kullanıcı
   // hatırlamadığı bir sözle suçlanmış olur ve koça güveni biter.
-  const pp = sozGecerli(prev, stats) ? stats.prevPlan : null;
+  const pp = HAFTALIK_PLAN && sozGecerli(prev, stats) ? stats.prevPlan : null;
   const soz = pp ? [
     "",
     "WHAT YOU TOLD THEM TO DO LAST WEEK (your own plan, and what they actually did):",
@@ -317,10 +328,10 @@ Write in TURKISH. Return ONLY JSON:
     : '"" (no earlier report exists — leave it EMPTY and never imply a direction: do not write \'düştü\', \'arttı\', \'yavaşladın\'. You have nothing to compare against and guessing would be a lie about their own data.)'},
   "win": "one specific thing they did well (reference a real number)",
   "gap": "the ONE thing holding them back most, stated plainly and kindly",
-  "focus": "one word: the skill this week's plan targets",
-  "steps": [ { "kind": "one of the kinds below", "label": "Turkish, imperative, max 6 words" } ]
+  "focus": "one word: the skill they should focus on this week",
+  "steps": ${HAFTALIK_PLAN ? '[ { "kind": "one of the kinds below", "label": "Turkish, imperative, max 6 words" } ]' : "[]"}
 }
-
+${HAFTALIK_PLAN ? `
 STEPS — this is the plan, and every step must be startable inside the app.
 Give exactly 3 steps, ordered: the first one is what they should do TODAY.
 Use ONLY these kinds:
@@ -329,16 +340,19 @@ ${Object.entries(ACTIONS).map(([k, v]) => `  ${k} — ${v}`).join("\n")}
 The plan used to be written twice — once as prose, once as buttons — and the two
 could disagree. Now there is ONE plan and each step is a button. A step nobody
 can press is advice, not coaching, so never describe an action that is not one of
-the kinds above.
+the kinds above.` : `
+NO PLAN. Leave "steps" as an empty array. Do not write a plan, a to-do list, or
+"bu haftanın planı"; do not promise steps or say you put something in their plan.
+"gap" already says what to fix — let "focus" name the skill and stop there.`}
 IF THE ACTIVITY LOG CONTAINS "What they tried but could not do", read it as INTENT,
 not as a sales opportunity. Someone who tapped a locked mode three times is telling
 you what they want to practise; someone who ran out of lives mid-session hit a wall,
-not a lack of motivation. Use it to shape the PLAN.
-  Good: "Üç kez gramer kartına dokunmuşsun — kuralı istiyorsun. Bu haftanın
+not a lack of motivation. Use it to shape ${HAFTALIK_PLAN ? "the PLAN" : "\"gap\" and \"focus\""}.
+${HAFTALIK_PLAN ? `  Good: "Üç kez gramer kartına dokunmuşsun — kuralı istiyorsun. Bu haftanın
          planına bir gramer dersi koydum."
   If what they want is not one of the kinds above (e.g. speaking practice while
   scenarios are closed), say so in one clause and offer the nearest kind that IS
-  available — never a step they cannot press.
+  available — never a step they cannot press.` : `  Good: "Üç kez gramer kartına dokunmuşsun — kuralı istiyorsun; bu hafta odağın gramer."`}
   Good: "Canın dört kez bitti ve turu yarıda bıraktın. Tek uzun tur yerine
          iki kısa tur deneyelim."
   FORBIDDEN: turning it into a purchase pitch ("kilide dokundun, hemen abone ol").
@@ -384,7 +398,7 @@ but do not pretend it did not happen.`;
     // TEK PLAN, HER ADIMI BİR EYLEM. Aynı beyaz liste: model buradan başka bir
     // adım uyduramaz — ürettiği metin navigasyona dönüşüyorsa doğrulanmadan
     // kullanılamaz. sanitizeActions bilinmeyen türü sessizce düşürür.
-    steps: sanitizeActions(parsed.steps),
+    steps: HAFTALIK_PLAN ? sanitizeActions(parsed.steps) : [],
   };
 }
 
