@@ -83,7 +83,7 @@ describe("hafta anahtarı", () => {
 // resolveMode'daki beyaz liste mantığının aynısı.
 describe("koç eylemleri", () => {
   test("bilinen eylem türleri katalogda", () => {
-    for (const k of ["swipe", "practice", "reading", "scenario", "grammar"]) {
+    for (const k of ["swipe", "practice", "reading", "grammar"]) {
       assert.ok(ACTIONS[k], `${k} katalogda yok`);
     }
   });
@@ -98,8 +98,11 @@ describe("koç eylemleri", () => {
     //   social       taraf yok (sunucuda sıfır oda, sıfır soket). Kapalı testte
     //                iki kişinin aynı anda kuyrukta olması imkânsıza yakın.
     //
-    // Üçü de geri gelecek; istemcideki karşılıkları da AYNI ANDA açılmalı.
-    for (const k of ["listening", "friends", "social"]) {
+    //   scenario — ilk sürümde uykuda (Beceriler'de "çok yakında"); koç
+    //              "sunum senaryosu başlat" adımı üretip uyuyan ekranı açmıştı.
+    //
+    // Hepsi geri gelecek; istemcideki karşılıkları da AYNI ANDA açılmalı.
+    for (const k of ["listening", "friends", "social", "scenario"]) {
       assert.equal(ACTIONS[k], undefined, `${k} hâlâ katalogda`);
     }
   });
@@ -116,7 +119,9 @@ describe("koç eylemleri", () => {
     //   7 — dinleme geçici olarak kapatıldı (kütüphane yetersiz)
     //   5 — Sosyal sekmesi uykuya alındı (friends + social); özellikler
     //       çalışıyor ama karşı taraf yok
-    assert.equal(Object.keys(ACTIONS).length, 5);
+    //   4 — senaryo uykuya alındı (18 Eyl 2026): Beceriler'de "çok yakında",
+    //       koç yine de plan adımı üretip uyuyan ekranı açıyordu
+    assert.equal(Object.keys(ACTIONS).length, 4);
   });
 
   test("eylem açıklamaları BOŞ olamaz — model neyi seçtiğini bilmeli", () => {

@@ -334,8 +334,11 @@ IF THE ACTIVITY LOG CONTAINS "What they tried but could not do", read it as INTE
 not as a sales opportunity. Someone who tapped a locked mode three times is telling
 you what they want to practise; someone who ran out of lives mid-session hit a wall,
 not a lack of motivation. Use it to shape the PLAN.
-  Good: "Üç kez senaryo provasına dokunmuşsun — konuşma pratiği istiyorsun.
-         Bu haftanın planına onu koydum."
+  Good: "Üç kez gramer kartına dokunmuşsun — kuralı istiyorsun. Bu haftanın
+         planına bir gramer dersi koydum."
+  If what they want is not one of the kinds above (e.g. speaking practice while
+  scenarios are closed), say so in one clause and offer the nearest kind that IS
+  available — never a step they cannot press.
   Good: "Canın dört kez bitti ve turu yarıda bıraktın. Tek uzun tur yerine
          iki kısa tur deneyelim."
   FORBIDDEN: turning it into a purchase pitch ("kilide dokundun, hemen abone ol").
@@ -412,7 +415,14 @@ export const ACTIONS = {
   // yönlendiren bir plan yazabilirdi — kullanıcı için çelişki, bizim için
   // takip edilmesi zor bir hata olurdu.
   // Kütüphane büyüyünce geri eklenecek; ekran ve rota yerinde duruyor.
-  scenario: "Senaryo provası yap (mülakat, market, doktor…)",
+  // scenario GEÇİCİ OLARAK ÇIKARILDI (18 Eyl 2026). Senaryo ilk sürümde uykuda:
+  // Beceriler'de "çok yakında" kartı, tıklanmıyor (istemci BecerilerScreen).
+  // Burada kalınca koç, kullanıcının "sunum becerimi geliştirmek istiyorum"
+  // hedefinden "sunum senaryosu başlat" adımı üretti ve istemci onu uyuyan
+  // ekrana götürdü — Beceriler'de görünmeyen bir bölüm koç üzerinden açıldı.
+  // Dinlemedeki kuralın aynısı: koç yalnızca ulaşılabilir şeyi reçete eder.
+  // Senaryo geri açılınca bu satır da istemcideki rota ile BİRLİKTE geri gelir.
+  // scenario: "Senaryo provası yap (mülakat, market, doktor…)",
   grammar:  "Gramer dersi al: kural + örnekler + puanlanan alıştırma",
   // friends ve social GEÇİCİ OLARAK ÇIKARILDI — Sosyal sekmesi uykuda.
   //
