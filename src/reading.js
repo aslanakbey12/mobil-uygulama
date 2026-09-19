@@ -749,6 +749,33 @@ export async function reportReading(key, reason, note, userId) {
   return { ok: true, ...r };
 }
 
+// GRAMER DERSİ GERİ BİLDİRİMİ — "anlatım yeterli miydi?" (19 Eyl 2026). Sayaç
+// content_feedback'te (kind=grammar, ref=konu id); "hayır" sebebi
+// content_reports'a. Okuma oyundan farkı: önbellek yok, silinecek parça yok —
+// bu sayılar dersi biz yeniden yazalım diye birikir.
+export const GRAMER_SEBEPLERI = ["kural", "ornek", "turkce", "soru"];
+
+export async function rateGrammar(id, up, reason, userId) {
+  if (!id) return { ok: false };
+  if (!up && reason && !GRAMER_SEBEPLERI.includes(reason)) return { ok: false };
+  const db = supa();
+  let f = { up: 0, down: 0 };
+  if (db) {
+    try {
+      const { data } = await db.from("content_feedback").select("up, down").eq("kind", "grammar").eq("ref", id).maybeSingle();
+      if (data) f = { up: Number(data.up) || 0, down: Number(data.down) || 0 };
+    } catch (_) {}
+  }
+  if (up) f.up++; else f.down++;
+  persistFeedback("grammar", id, f);
+  if (db && !up && reason) {
+    db.from("content_reports")
+      .insert({ kind: "grammar", ref: String(id).slice(0, 300), user_id: userId || null, reason, note: null })
+      .then(() => {}, () => {});
+  }
+  return { ok: true, ...f };
+}
+
 // Ateşle-unut: yazma başarısız olursa kullanıcı akışı ETKİLENMEZ.
 export function persistFeedback(kind, ref, f) {
   const db = supa();

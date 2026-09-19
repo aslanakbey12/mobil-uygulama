@@ -505,6 +505,17 @@ app.post("/reading/report", async (req, reply) => {
   return reading.reportReading(String(key).slice(0, 160), reason, note, userId);
 });
 
+// Gramer dersi geri bildirimi — "anlatım yeterli miydi?" (bkz. reading.rateGrammar)
+app.post("/grammar/rate", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const { id, up, reason } = req.body || {};
+  if (!id) return reply.code(400).send({ error: "id gerekli" });
+  const r = await reading.rateGrammar(String(id).slice(0, 80), !!up, reason ? String(reason) : null, userId);
+  if (!r.ok) return reply.code(400).send({ error: "geçersiz sebep" });
+  return r;
+});
+
 // Kişiselleştirilmiş örnek cümle (seviye + ilgi/motive bağlamına göre; profil-önbellekli)
 app.post("/word/example", async (req, reply) => {
   const userId = getUserId(req);

@@ -129,3 +129,19 @@ describe("şikâyet (Play YZ beyanı)", () => {
     assert.equal(db.sikayet.length, 0);
   });
 });
+
+describe("gramer dersi geri bildirimi", () => {
+  test("sayaç kind=grammar altında birikir; 'hayır' sebebi rapora yazılır", async () => {
+    db.oylar.clear(); db.sikayet = [];
+    const r1 = await reading.rateGrammar("a1-present-simple", true, null, "u-1");
+    assert.deepEqual([r1.up, r1.down], [1, 0]);
+    const r2 = await reading.rateGrammar("a1-present-simple", false, "ornek", "u-2");
+    assert.deepEqual([r2.up, r2.down], [1, 1]);
+    assert.equal(db.sikayet.length, 1);
+    assert.deepEqual(db.sikayet[0], { kind: "grammar", ref: "a1-present-simple", user_id: "u-2", reason: "ornek", note: null });
+  });
+  test("bilinmeyen sebep reddedilir", async () => {
+    const r = await reading.rateGrammar("a1-x", false, "spam", "u-3");
+    assert.equal(r.ok, false);
+  });
+});
