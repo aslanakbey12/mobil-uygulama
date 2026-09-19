@@ -177,10 +177,10 @@ ${evidence}${topic}Write a coherent, engaging, well-structured passage (about ${
 Requirements:
 - Use EACH of these target words ${repeatFor(words.length)} times, in DIFFERENT sentences and natural contexts (varied forms allowed): ${words.join(", ")}.
 - Keep about 90-95% of the vocabulary at or below ${level}. Apart from the target words, introduce AT MOST 2-3 new or harder words — no rare/obscure vocabulary.
-- Then write exactly 3 multiple-choice comprehension questions in English (4 options, exactly one correct).
+- Then write exactly 3 multiple-choice comprehension questions in English (4 options, exactly one correct), one of each kind, in this order: "gist" (the main idea or purpose of the passage), "detail" (a fact stated explicitly in the passage — the correct option must reuse the passage's own words), "inference" (something implied but not stated). For each question add "why": ONE short sentence in Turkish that explains why the correct option is right, pointing to the relevant part of the passage (e.g. "İkinci paragrafta 'he never missed a day' deniyor.").
 - Also build a "glossary" of 6-8 useful words from this passage (include the target words plus a couple of harder ones), each with: base form, Turkish meaning, CEFR level, and a very short English example.
 Return ONLY valid JSON with this exact shape and nothing else:
-{"title": string, "passage": string, "questions": [{"q": string, "options": [string, string, string, string], "answer": number}], "glossary": [{"en": string, "tr": string, "level": string, "ex": string}]}
+{"title": string, "passage": string, "questions": [{"kind": "gist"|"detail"|"inference", "q": string, "options": [string, string, string, string], "answer": number, "why": string}], "glossary": [{"en": string, "tr": string, "level": string, "ex": string}]}
 "answer" is the 0-based index of the correct option.`;
 }
 
@@ -404,14 +404,29 @@ export function extractJson(txt) {
   return escapeControls(t);
 }
 
+// Ayrıntı sorusu: doğru şıkkın içerik kelimelerinden (≥4 harf, kök) en az biri
+// parçada geçmeli. Ana fikir/çıkarım sorusuna uygulanmaz — orada şık parçayı
+// başka kelimelerle özetler. İçerik kelimesi yoksa (ör. "Yes") geçer sayılır.
+const SORU_DUR = new Set(["that", "this", "these", "those", "with", "from", "they", "their", "there", "about", "have", "been", "were", "what", "which", "because", "something", "nothing", "very", "also", "only", "just", "than", "then", "them", "some", "most", "many", "much", "into", "after", "before", "while", "during"]);
+export function soruParcayaUyuyor(q, passage) {
+  if (q.kind !== "detail") return true;
+  const kok = (w) => { const k = w.replace(/(ing|ies|ied|ed|es|s)$/, ""); return k.length >= 3 ? k : w; };
+  const sozler = (String(q.options[q.answer] || "").toLowerCase().match(/[a-z']+/g) || []).filter((w) => w.length >= 4 && !SORU_DUR.has(w)).map(kok);
+  if (!sozler.length) return true;
+  const metin = String(passage || "").toLowerCase();
+  return sozler.some((w) => metin.includes(w));
+}
+
 const CEFR = ["A1", "A2", "B1", "B2", "C1", "C2"];
 function normalize(p, level, words) {
   const questions = (Array.isArray(p.questions) ? p.questions : [])
     .slice(0, 3)
     .map((q) => ({
+      kind: ["gist", "detail", "inference"].includes(q.kind) ? q.kind : "detail",
       q: String(q.q || "").slice(0, 240),
       options: (Array.isArray(q.options) ? q.options : []).slice(0, 4).map((o) => String(o).slice(0, 140)),
       answer: Number.isInteger(q.answer) ? Math.max(0, Math.min(3, q.answer)) : 0,
+      why: String(q.why || "").slice(0, 220),
     }))
     .filter((q) => q.options.length === 4 && q.q);
   const seen = new Set();
@@ -670,6 +685,13 @@ export async function generatePassage(level, words, opts = {}) {
     try { parsed = JSON.parse(clean); } catch (e) { parsed = repairJson(clean); }
     out = normalize(parsed, level, words);
     if (!out.passage || out.questions.length === 0) throw new Error("eksik parça");
+    // SORU–PARÇA UYUMU (19 Eyl 2026). Readle kullanıcıları AI sorularının
+    // parçayla uyuşmamasından şikâyetçi; bizde de model bazen parçada olmayan
+    // bir "ayrıntı" soruyordu. Ayrıntı sorusunun doğru şıkkı parçada geçmiyorsa
+    // o soru atılır (parça ve diğer sorular kalır); iki sorunun altına
+    // düşülürse parça reddedilir ve zincir yeniden üretir.
+    out.questions = out.questions.filter((q) => soruParcayaUyuyor(q, out.passage));
+    if (out.questions.length < 2) throw new Error("sorular parçayla uyuşmuyor");
   } catch (e) {
     throw new Error("Okuma oluşturulamadı → " + String(e?.message || e).slice(0, 150));
   }

@@ -145,3 +145,16 @@ describe("gramer dersi geri bildirimi", () => {
     assert.equal(r.ok, false);
   });
 });
+
+describe("soru–parça uyumu", () => {
+  const P = "Tom lives in a small town. Every morning he rides his bike to the bakery and buys fresh bread.";
+  test("ayrıntı sorusunun doğru şıkkı parçada geçiyorsa kabul, geçmiyorsa ret", () => {
+    assert.equal(reading.soruParcayaUyuyor({ kind: "detail", options: ["by car", "by bike", "on foot", "by bus"], answer: 1 }, P), true);
+    assert.equal(reading.soruParcayaUyuyor({ kind: "detail", options: ["by car", "by train", "on foot", "by bus"], answer: 1 }, P), false);
+  });
+  test("ana fikir ve çıkarım sorularına uygulanmaz; içeriksiz şık geçer", () => {
+    assert.equal(reading.soruParcayaUyuyor({ kind: "gist", options: ["A man's daily routine", "x", "y", "z"], answer: 0 }, P), true);
+    assert.equal(reading.soruParcayaUyuyor({ kind: "inference", options: ["He is healthy", "x", "y", "z"], answer: 0 }, P), true);
+    assert.equal(reading.soruParcayaUyuyor({ kind: "detail", options: ["Yes", "No", "x", "y"], answer: 0 }, P), true);
+  });
+});
