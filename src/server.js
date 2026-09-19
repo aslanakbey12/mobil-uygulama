@@ -496,6 +496,15 @@ app.post("/reading/rate", async (req, reply) => {
   return { ok: true, ...r };
 });
 
+// Okuma şikâyeti — Play "YZ içeriği" beyanının şartı (bkz. reading.reportReading)
+app.post("/reading/report", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  const { key, reason, note } = req.body || {};
+  if (!key || !reading.SIKAYET_SEBEPLERI.includes(reason)) return reply.code(400).send({ error: "key ve geçerli sebep gerekli" });
+  return reading.reportReading(String(key).slice(0, 160), reason, note, userId);
+});
+
 // Kişiselleştirilmiş örnek cümle (seviye + ilgi/motive bağlamına göre; profil-önbellekli)
 app.post("/word/example", async (req, reply) => {
   const userId = getUserId(req);

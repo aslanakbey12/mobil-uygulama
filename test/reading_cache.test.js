@@ -35,6 +35,7 @@ const sahte = {
       else db.oylar.set(r.ref, { up: r.up, down: r.down });
       return { error: null }; };
     q.delete = () => ({ eq: async (k, v) => { db.islem.push(`delete ${tablo}`); db.rows.delete(v); return { error: null }; } });
+    q.insert = async (r) => { db.islem.push(`insert ${tablo}`); (db.sikayet ||= []).push(r); return { error: null }; };
     return q;
   },
   rpc: async () => ({ error: null }),
@@ -97,5 +98,34 @@ describe("çıktı bütçesi", () => {
     const tavan = m ? Number(m[1]) : Number((src.match(/maxOutputTokens:\s*(\d{4,})/g) || [])
       .map((x) => Number(x.replace(/\D/g, ""))).sort((a, b) => b - a)[0]);
     assert.ok(tavan >= 3500, `okuma tavanı en az 3500 olmalı, bulunan: ${tavan}`);
+  });
+});
+
+describe("şikâyet (Play YZ beyanı)", () => {
+  test("'uygunsuz' TEK şikâyette parça düşer ve kayıt kim/neden ile yazılır", async () => {
+    db.oylar.clear(); db.rows.clear(); db.sikayet = []; db.islem.length = 0;
+    const key = "B1||offend";
+    db.rows.set(key, { passage: "x", questions: [{}] });
+    const r = await reading.reportReading(key, "uygunsuz", "  rahatsız edici  ", "u-1");
+    assert.equal(r.replaced, true);
+    assert.ok(!db.rows.has(key), "kalıcı önbellekten silinmeli");
+    assert.equal(db.sikayet.length, 1);
+    assert.deepEqual(db.sikayet[0], { kind: "reading", ref: key, user_id: "u-1", reason: "uygunsuz", note: "  rahatsız edici  " });
+  });
+  test("'seviye' tek başına parçayı silmez — olumsuz oy gibi sayılır", async () => {
+    db.oylar.clear(); db.rows.clear(); db.sikayet = [];
+    const key = "B1||hard";
+    db.rows.set(key, { passage: "x", questions: [{}] });
+    const r = await reading.reportReading(key, "seviye", "", "u-2");
+    assert.equal(r.replaced, false);
+    assert.ok(db.rows.has(key));
+    assert.equal(db.oylar.get(key).down, 1);
+    assert.equal(db.sikayet[0].note, null);   // boş not null yazılır, "" değil
+  });
+  test("geçersiz sebep reddedilir, hiçbir şey yazılmaz", async () => {
+    db.sikayet = [];
+    const r = await reading.reportReading("B1||x", "spam", "", "u-3");
+    assert.equal(r.ok, false);
+    assert.equal(db.sikayet.length, 0);
   });
 });

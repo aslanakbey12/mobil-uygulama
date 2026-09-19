@@ -721,6 +721,34 @@ export async function rateReading(key, up) {
   return { replaced: false };
 }
 
+// ŞİKÂYET. Play'deki "YZ ile üretilen içerik" beyanının şartı: kullanıcı uygunsuz
+// metni uygulamadan çıkmadan bildirebilmeli. Oydan farkı: KİM, NEDEN dediği
+// content_reports'a yazılır (db/22) ki biz bakabilelim. "uygunsuz" tek şikâyette
+// parçayı önbellekten düşürür — yeniden üretim birkaç kuruş, rahatsız edici
+// metnin bir kullanıcıya daha gitmesi mağaza politikası. Diğer sebepler olumsuz
+// oy gibi sayılır (3 eşiği), tek kişinin "zordu" demesi parçayı silmez.
+export const SIKAYET_SEBEPLERI = ["uygunsuz", "hatali", "seviye", "diger"];
+
+export async function reportReading(key, reason, note, userId) {
+  if (!key || !SIKAYET_SEBEPLERI.includes(reason)) return { ok: false };
+  const db = supa();
+  if (db) {
+    // Ateşle-unut: kayıt düşse bile kullanıcıya "bildirdin" denir; asıl koruma
+    // aşağıdaki önbellek düşürme, o beklenir.
+    db.from("content_reports")
+      .insert({ kind: "reading", ref: String(key).slice(0, 300), user_id: userId || null, reason, note: String(note || "").slice(0, 300) || null })
+      .then(() => {}, () => {});
+  }
+  if (reason === "uygunsuz") {
+    cache.delete(key);
+    await cacheDrop(key);
+    readingFeedback.delete(key);
+    return { ok: true, replaced: true };
+  }
+  const r = await rateReading(key, false);
+  return { ok: true, ...r };
+}
+
 // Ateşle-unut: yazma başarısız olursa kullanıcı akışı ETKİLENMEZ.
 export function persistFeedback(kind, ref, f) {
   const db = supa();
