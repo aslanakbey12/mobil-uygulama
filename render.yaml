@@ -43,6 +43,11 @@ services:
       # Doğrulanmamış header'a (x-user-id) GÜVENME → tam kimlik kilidi. Supabase env'leri gerekir.
       - key: AUTH_STRICT
         value: "1"
+      - key: NODE_ENV
+        value: production
+      # Koç sohbeti ucu. İstemcide KOC_SOHBETI_ACIK ile birlikte açılır; "1" değilse 404.
+      - key: COACH_CHAT_OPEN
+        value: "0"
       # ── YZ MALİYET FRENLERİ ──
       # Kullanıcı başına günlük çağrı sınırı.
       - key: AI_DAILY_CAP

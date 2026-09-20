@@ -1,4 +1,10 @@
 import { supa } from "./supabase.js";
+import { createHash } from "node:crypto";
+// ÖNBELLEK ANAHTARI İSTEMCİ BAĞLAMINI DA TAŞIR. Anahtar yalnız `en` iken
+// "apple" için uydurma bir Türkçe/tanım gönderen, herkesin göreceği ipucu ve
+// çeviriyi belirliyordu. İstemci sözlükten deterministik değer yolladığı için
+// isabet oranı değişmez; uydurma değer yalnız gönderene özel bir girdi olur.
+const baglamKey = (en, ...ctx) => String(en).toLowerCase() + "#" + createHash("sha1").update(ctx.map((x) => String(x || "").slice(0, 300)).join("|")).digest("hex").slice(0, 12);
 import { callModel, activeProvider } from "./llm.js";
 // Okuma parçası üretimi (Google Gemini). API anahtarı YALNIZCA sunucuda (GEMINI_API_KEY).
 // Kullanıcının öğrenme havuzundaki kelimelerden, seviyesine uygun kısa bir metin +
@@ -450,7 +456,7 @@ function normalize(p, level, words) {
 // Hafıza kancası (mnemonic): bir kelimeyi akılda tutmaya yardımcı kısa Türkçe ipucu.
 const mnemoCache = new Map();
 export async function generateMnemonic(en, tr) {
-  const key = String(en).toLowerCase();
+  const key = baglamKey(en, tr);
   if (mnemoCache.has(key)) return mnemoCache.get(key);
   if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const prompt = `Türk öğrenci için İngilizce "${en}" (Türkçe anlamı: ${tr}) kelimesini akılda tutmaya yardımcı, KISA (tek cümle, en fazla 20 kelime) yaratıcı bir hafıza kancası yaz. Kelimenin okunuşunu ya da görüntüsünü Türkçe bir çağrışımla anlamına bağla. SADECE Türkçe ipucu cümlesini yaz; tırnak, başlık veya açıklama ekleme.`;
@@ -474,7 +480,7 @@ export async function generateMnemonic(en, tr) {
 // (mnemonic deseni) → aynı kelime hayatta bir kez çevrilir.
 const translateCache = new Map();
 export async function translateWordCard(en, definition, example) {
-  const key = String(en).toLowerCase();
+  const key = baglamKey(en, definition, example);
   if (translateCache.has(key)) return translateCache.get(key);
   if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const def = String(definition || "").slice(0, 200);
@@ -509,7 +515,7 @@ SADECE JSON döndür: {"definitionTr": string, "exampleTr": string}`;
 // hangi arama terimi doğru sonucu getirir. Kalıcı önbellek → tüm kullanıcılar paylaşır.
 const imgQueryCache = new Map();
 export async function imageQueryFor(en, tr, definition) {
-  const key = String(en).toLowerCase();
+  const key = baglamKey(en, tr, definition);
   if (imgQueryCache.has(key)) return imgQueryCache.get(key);
   if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const prompt = `English word: "${en}" (Turkish meaning: ${String(tr || "").slice(0, 60)}; definition: ${String(definition || "").slice(0, 160)}).

@@ -31,6 +31,20 @@ voiceroom.setBroadcaster((roomName, members, payload) => {
 });
 import { mintToken, livekitConfigured } from "./token.js";
 import { getUserId, authConfigured, verifyToken, tokenFromReq } from "./auth.js";
+
+// ── GİRDİ TEMİZLİĞİ (20 Eyl 2026 denetimi) ──────────────────────────────────
+// Başkasına gösterilen ad: 40 karakter, küfür süzgeci, boşsa "Kullanıcı".
+// Eskiden altı rotada sınırsız ve denetimsizdi (lig tablosu, oda üyeleri,
+// davet push'u).
+const temizAd = (n) => { const t = moderateChat(String(n || "").slice(0, 40)); return String(t?.clean ?? t ?? "").trim() || "Kullanıcı"; };
+const CEFR = ["A1", "A2", "B1", "B2", "C1", "C2"];
+const seviye = (l) => (CEFR.includes(String(l || "").toUpperCase()) ? String(l).toUpperCase() : "B1");
+// Kelime listesi: yalnız sözlük biçimindeki girdiler, her biri ≤40 karakter.
+// Sınırsız öğe doğrudan isteme giriyordu (token maliyeti + yönlendirme noktası).
+const kelimeListesi = (arr, max) => (Array.isArray(arr) ? [...new Set(arr.filter(Boolean).map((x) => String(x).slice(0, 40)).filter((x) => /^[A-Za-z][A-Za-z'’ -]*$/.test(x)))].slice(0, max) : []);
+const havuz = (pool) => (Array.isArray(pool) ? pool.slice(0, 500) : []);
+// YZ hatası istemciye SABİT metinle döner; sağlayıcı ayrıntısı loga.
+const yzHatasi = (reply, e, log) => { log.warn({ err: String(e?.message || e) }, "yz-hata"); return reply.code(502).send({ error: "Yapay zekâ şu an yanıt veremedi, birazdan tekrar dene." }); };
 import { supaConfigured, supa } from "./supabase.js";
 import { isPremium, setPremium, isAgeConfirmed } from "./entitlements.js";
 import * as coach from "./coach.js";
@@ -386,6 +400,15 @@ app.addHook("onRequest", async (req, reply) => {
   }
 });
 
+// 500'de Fastify varsayılanı error.message'ı (Supabase/fetch ayrıntısı) istemciye
+// yazıyordu. Ayrıntı loga, istemciye sabit metin. 4xx'ler (doğrulama, gövde
+// limiti) olduğu gibi geçer.
+app.setErrorHandler((err, req, reply) => {
+  const st = err.statusCode && err.statusCode < 500 ? err.statusCode : 500;
+  if (st >= 500) app.log.error({ err: String(err?.message || err), url: req.url }, "sunucu hatası");
+  reply.code(st).send({ error: st >= 500 ? "Sunucu hatası, birazdan tekrar dene." : String(err.message || "geçersiz istek").slice(0, 200) });
+});
+
 app.get("/health", async () => ({
   ok: true,
   // HANGİ SÜRÜM ÇALIŞIYOR. Deploy sonrası "indi mi" sorusunun tek dürüst
@@ -426,16 +449,16 @@ app.post("/reading/generate", async (req, reply) => {
   // 3 KELİME. Eskiden 8'di. Daha az hedef kelime = parçanın onlara ayıracağı yer
   // artar, metin "kelime tıkıştırılmış" olmaktan çıkar. Sunucu da kesiyor:
   // istemcinin gönderdiği sayıya güvenmek, maliyeti istemciye emanet etmek olurdu.
-  const list = Array.isArray(words) ? [...new Set(words.filter(Boolean).map(String))].slice(0, 3) : [];
-  const known = Array.isArray(knownSample) ? knownSample.filter(Boolean).map(String).slice(0, 15) : [];
+  const list = kelimeListesi(words, 3);
+  const known = kelimeListesi(knownSample, 15);
   const theme = String(topic || "").slice(0, 60);
   if (list.length < 1) return reply.code(400).send({ error: "Yeterli kelime yok. Önce Kelimeler'de birkaç kelime çalış." });
   try {
-    const passage = await reading.generatePassage(level || "B1", list, { knownSample: known, topic: theme });
+    const passage = await reading.generatePassage(seviye(level), list, { knownSample: known, topic: theme });
     reading.bumpDaily(userId);
     return { passage };
   } catch (e) {
-    return reply.code(502).send({ error: String(e.message || e) });
+    return yzHatasi(reply, e, app.log);
   }
 });
 
@@ -453,7 +476,7 @@ app.post("/word/mnemonic", async (req, reply) => {
     const mnemonic = await reading.generateMnemonic(String(en).slice(0, 40), String(tr || "").slice(0, 80));
     return { mnemonic };
   } catch (e) {
-    return reply.code(502).send({ error: String(e.message || e) });
+    return yzHatasi(reply, e, app.log);
   }
 });
 
@@ -473,7 +496,7 @@ app.post("/word/translate", async (req, reply) => {
     const tr = await reading.translateWordCard(String(en).slice(0, 40), definition, example);
     return { tr };
   } catch (e) {
-    return reply.code(502).send({ error: String(e.message || e) });
+    return yzHatasi(reply, e, app.log);
   }
 });
 
@@ -481,6 +504,7 @@ app.post("/word/translate", async (req, reply) => {
 app.post("/word/image/rate", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (perUserLimited("feedback", userId, 20)) return reply.code(429).send({ error: "çok sık" });
   const { en, url, up } = req.body || {};
   if (!en || !url) return reply.code(400).send({ error: "en ve url gerekli" });
   return images.rateWordImage(String(en).slice(0, 60), String(url).slice(0, 500), !!up, userId);
@@ -490,6 +514,7 @@ app.post("/word/image/rate", async (req, reply) => {
 app.post("/reading/rate", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (perUserLimited("feedback", userId, 20)) return reply.code(429).send({ error: "çok sık" });
   const { key, up } = req.body || {};
   if (!key) return reply.code(400).send({ error: "key gerekli" });
   const r = await reading.rateReading(String(key).slice(0, 160), !!up);
@@ -500,6 +525,7 @@ app.post("/reading/rate", async (req, reply) => {
 app.post("/reading/report", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (perUserLimited("feedback", userId, 20)) return reply.code(429).send({ error: "çok sık" });
   const { key, reason, note } = req.body || {};
   if (!key || !reading.SIKAYET_SEBEPLERI.includes(reason)) return reply.code(400).send({ error: "key ve geçerli sebep gerekli" });
   return reading.reportReading(String(key).slice(0, 160), reason, note, userId);
@@ -509,6 +535,7 @@ app.post("/reading/report", async (req, reply) => {
 app.post("/grammar/rate", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (perUserLimited("feedback", userId, 20)) return reply.code(429).send({ error: "çok sık" });
   const { id, up, reason } = req.body || {};
   if (!id) return reply.code(400).send({ error: "id gerekli" });
   const r = await reading.rateGrammar(String(id).slice(0, 80), !!up, reason ? String(reason) : null, userId);
@@ -530,7 +557,7 @@ app.post("/word/example", async (req, reply) => {
     const example = await reading.generateExample(String(en).slice(0, 40), String(tr || "").slice(0, 80), String(level || "B1"), String(context || "").slice(0, 40));
     return { example };
   } catch (e) {
-    return reply.code(502).send({ error: String(e.message || e) });
+    return yzHatasi(reply, e, app.log);
   }
 });
 
@@ -585,7 +612,7 @@ app.post("/word/image", async (req, reply) => {
     const image = await images.fetchWordImage(word, q);
     return { image: { ...image, depictable: true } };
   } catch (e) {
-    return reply.code(502).send({ error: String(e.message || e) });
+    return yzHatasi(reply, e, app.log);
   }
 });
 
@@ -632,7 +659,7 @@ app.post("/coach/weekly", async (req, reply) => {
     if (!out.cached && out.report) aiquota.bumpAi(userId);
     return out;
   } catch (e) {
-    return reply.code(502).send({ error: String(e.message || e) });
+    return yzHatasi(reply, e, app.log);
   }
 });
 
@@ -657,11 +684,21 @@ app.post("/coach/chat", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!coach.coachConfigured()) return reply.code(503).send({ error: "Koç yakında." });
+  // BAYRAĞIN SUNUCU EŞİ. İstemcide KOC_SOHBETI_ACIK=false ama uç açıktı: curl +
+  // gerçek hesapla en pahalı kalem kota tavanına kadar harcanabiliyordu.
+  if (process.env.COACH_CHAT_OPEN !== "1") return reply.code(404).send({ error: "Koç sohbeti henüz açık değil." });
   if (await premiumKapisi(userId, reply, "Kişisel koç")) return;
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük YZ hakkın doldu, yarın tekrar dene." });
   aiquota.bumpAi(userId);
-  const { profile, behaviour, plan, text } = req.body || {};
+  const { profile, behaviour, text } = req.body || {};
+  // Plan alanları isteme giriyor; sınırsız serbest metindi. Kısa ve sayılı.
+  const planRaw = req.body?.plan;
+  const plan = planRaw && typeof planRaw === "object" ? {
+    goal: String(planRaw.goal || "").slice(0, 80), deadline: String(planRaw.deadline || "").slice(0, 40),
+    focus: String(planRaw.focus || "").slice(0, 80),
+    steps: (Array.isArray(planRaw.steps) ? planRaw.steps : []).slice(0, 5).map((s) => ({ kind: String(s?.kind || "").slice(0, 30), done: !!s?.done })),
+  } : null;
   try {
     // GEÇMİŞ SUNUCUDAN. İstemci artık kendi geçmişini taşımıyor — yalnızca yeni
     // mesajını gönderiyor. Böylece sohbet ekran kapanınca kaybolmuyor, ikinci
@@ -694,7 +731,7 @@ app.post("/coach/chat", async (req, reply) => {
 
     return { ...out, history: gecmis.concat(out.reply ? [{ mine: false, text: out.reply }] : []) };
   } catch (e) {
-    return reply.code(502).send({ error: String(e.message || e) });
+    return yzHatasi(reply, e, app.log);
   }
 });
 
@@ -713,7 +750,7 @@ app.post("/league/sync", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   const { name, weeklyXp, level } = req.body || {};
-  return league.sync({ userId, name, weeklyXp, level });
+  return league.sync({ userId, name: temizAd(name), weeklyXp: Math.max(0, Math.min(100000, Number(weeklyXp) || 0)), level: seviye(level) });
 });
 
 // Sesli tur odası: sıra gelen konuşan klibini yükler → herkese oynatılır, sıra döner
@@ -726,9 +763,14 @@ app.post("/voiceroom/clip", async (req, reply) => {
   if (!room.members.some((m) => m.userId === userId)) return reply.code(403).send({ error: "erişim yok" });
   const buf = req.body;
   if (!buf || !buf.length) return reply.code(400).send({ error: "ses verisi yok" });
-  const clipId = voiceroom.putClip(buf, req.headers["content-type"] || "audio/m4a", roomName);
-  const durationMs = parseInt(req.headers["x-duration-ms"] || "3000", 10);
+  // SIRA KONTROLÜ SAKLAMADAN ÖNCE. Eskiden klip önce belleğe alınıyor, sonra
+  // "sıra sende değil" deniyordu; 2 MB'lık gövdeler 30 dk bellekte kalıyordu.
+  if (buf.length > 512 * 1024) return reply.code(413).send({ error: "klip çok büyük" });
+  if (perUserLimited("clip", userId, 10)) return reply.code(429).send({ error: "çok sık" });
   const vr = voiceroom.getVoiceRoom(roomName);
+  if (!vr || voiceroom.currentSpeaker(vr) !== userId) return reply.code(409).send({ error: "sıra sende değil" });
+  const clipId = voiceroom.putClip(buf, req.headers["content-type"] || "audio/m4a", roomName);
+  const durationMs = Math.max(500, Math.min(30000, parseInt(req.headers["x-duration-ms"] || "3000", 10) || 3000));
   const r = voiceroom.onClip(vr, userId, clipId, durationMs);
   if (r.error) return reply.code(409).send({ error: r.error });
   return { ok: true, clipId };
@@ -759,7 +801,7 @@ app.post("/matchmaking/join", async (req, reply) => {
   const { name, level, mode, pool } = req.body || {};
   // Yaş, gövdeden DEĞİL veritabanından okunur (bkz. entitlements.isAgeConfirmed).
   if (!(await isAgeConfirmed(userId))) return reply.code(403).send({ error: AGE_ERR });
-  return mm.join({ userId, name, level: level || "B1", mode, pool });
+  return mm.join({ userId, name: temizAd(name), level: seviye(level), mode, pool: havuz(pool) });
 });
 
 // Durum
@@ -814,10 +856,13 @@ app.post("/rooms/leave", async (req, reply) => {
 app.post("/report", async (req, reply) => {
   const reporterId = getUserId(req);
   if (!reporterId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
-  const { targetId, roomName, reason } = req.body || {};
-  if (!targetId) return reply.code(400).send({ error: "targetId gerekli" });
+  const { targetId } = req.body || {};
+  if (!UUID_RE.test(String(targetId || ""))) return reply.code(400).send({ error: "targetId gerekli" });
+  if (perUserLimited("report", reporterId, 10)) return reply.code(429).send({ error: "çok sık" });
+  const roomName = String(req.body?.roomName || "").slice(0, 64) || null;
+  const reason = String(req.body?.reason || "").slice(0, 300);
   const count = mod.report({ reporterId, targetId, roomName, reason });
-  app.log.warn({ reporterId, targetId, roomName, reason }, "report");
+  app.log.warn({ reporterId, targetId, roomName }, "report");   // sebep metni loga yazılmaz
 
   // Otomatik moderasyon: aynı odada birden çok kişi bildirdiyse çıkar
   if (roomName && mod.shouldEject(roomName, targetId)) {
@@ -834,7 +879,7 @@ app.post("/block", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   const { targetId } = req.body || {};
-  if (!targetId) return reply.code(400).send({ error: "targetId gerekli" });
+  if (!UUID_RE.test(String(targetId || ""))) return reply.code(400).send({ error: "targetId gerekli" });
   mod.block(userId, targetId);
   return { ok: true };
 });
@@ -857,14 +902,15 @@ app.post("/rooms/create", async (req, reply) => {
   if (!premium && !canEnterRoom(userId)) {
     return reply.code(402).send({ error: "limit", message: `Ücretsiz planda günde ${freeDailyLimit()} oda kurabilirsin. Premium ile sınırsız.`, upgrade: true });
   }
-  const { level, name, mode, pool } = req.body || {};
-  const topic = pickTopic(level || "B1");
+  const { level: lvRaw, name: nameRaw, mode, pool: poolRaw } = req.body || {};
+  const level = seviye(lvRaw), name = temizAd(nameRaw), pool = havuz(poolRaw);
+  const topic = pickTopic(level);
   // Oda kurulunca ORTAK kelime YOK (arkadaş henüz gelmedi) → focusWords boş.
   // Kuran kişinin havuzunu sakla; arkadaş katılınca kesişim hesaplanır.
-  const room = createHostedRoom({ host: { userId, name }, level: level || "B1", topic, mode, focusWords: [] });
-  room.hostPool = Array.isArray(pool) ? [...new Set(pool.filter(Boolean).map((x) => String(x).toLowerCase()))] : [];
+  const room = createHostedRoom({ host: { userId, name }, level, topic, mode, focusWords: [] });
+  room.hostPool = [...new Set(pool.filter(Boolean).map((x) => String(x).toLowerCase()))];
   // Oyun modu: ızgara kelimeleri için havuz listesi (kuran + katılanların havuzları)
-  room.memberPools = [{ userId, name, pool: Array.isArray(pool) ? pool : [] }];
+  room.memberPools = [{ userId, name, pool }];
   if (!premium) recordRoomEntry(userId);   // ücretsiz günlük oda sayacı
   return { room: { name: room.name, level: room.level, mode: room.mode, topic: room.topic, focusWords: [], code: room.code, members: room.members.map(m => ({ name: m.name })), size: room.members.length } };
 });
@@ -881,8 +927,9 @@ app.post("/rooms/ai", async (req, reply) => {
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
   if (!aiquota.underAiCap(userId)) return reply.code(429).send({ error: "Bugünlük AI hakkın doldu, yarın tekrar dene." });
   aiquota.bumpAi(userId);
-  const { level, name, words, mode, scenario, topic } = req.body || {};
-  const focusWords = Array.isArray(words) ? [...new Set(words.filter(Boolean).map(String))].slice(0, 4) : [];
+  const { level: lvRaw, name: nameRaw, words, mode, scenario, topic } = req.body || {};
+  const level = seviye(lvRaw), name = temizAd(nameRaw);
+  const focusWords = kelimeListesi(words, 4);
   // MOD/SENARYO/KONU İSTEMCİDEN GELİR AMA DOĞRUDAN İSTEME GİRMEZ.
   // chat_ai.js bunları BİLİNEN id listesiyle eşleştirir; eşleşmeyen değer sessizce
   // varsayılana düşer. İstemciden gelen serbest metnin YZ istemine sızması, istem
@@ -914,7 +961,7 @@ app.post("/chat/recap", async (req, reply) => {
   if (!aiquota.underAiCap(userId)) return { recap: null };    // günlük AI kotası doldu → sessizce geç
   aiquota.bumpAi(userId);
   try {
-    const recap = await chatAI.generateRecap(msgs, Array.isArray(words) ? words : [], String(level || "B1"), Array.isArray(tasks) ? tasks : []);
+    const recap = await chatAI.generateRecap(msgs, kelimeListesi(words, 12), seviye(level), Array.isArray(tasks) ? tasks.slice(0, 10) : []);
     return { recap };
   } catch (e) {
     return { recap: null }; // özet üretilemedi → çıkışı bloklama, sessizce geç
@@ -926,18 +973,19 @@ app.post("/rooms/join", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!(await isAgeConfirmed(userId))) return reply.code(403).send({ error: AGE_ERR });
-  const { code, name, pool } = req.body || {};
+  const { code, name: nameRaw, pool: poolRaw } = req.body || {};
+  const name = temizAd(nameRaw), pool = havuz(poolRaw);
   if (!code) return reply.code(400).send({ error: "code gerekli" });
   const room = getRoomByCode(code);
   if (!room) return reply.code(404).send({ error: "oda bulunamadı veya kapandı" });
   const res = addMember(room, { userId, name });
   if (!res.ok) return reply.code(409).send({ error: res.reason });
   // Arkadaş katıldı → GERÇEK ortak kelimeleri hesapla (kuran havuzu ∩ katılan havuzu)
-  const joinPool = Array.isArray(pool) ? new Set(pool.filter(Boolean).map((x) => String(x).toLowerCase())) : new Set();
+  const joinPool = new Set(pool.filter(Boolean).map((x) => String(x).toLowerCase()));
   const common = (room.hostPool || []).filter((w) => joinPool.has(w)).slice(0, 12);
   room.focusWords = common;
   // Oyun modu: katılanın havuzunu da ızgara için ekle
-  if (room.mode === "game") { room.memberPools = room.memberPools || []; room.memberPools.push({ userId, name, pool: Array.isArray(pool) ? pool : [] }); }
+  if (room.mode === "game") { room.memberPools = room.memberPools || []; room.memberPools.push({ userId, name, pool }); }
   // Kuran kişiye WS ile bildir: ortak kelimeler + arkadaş katıldı → aktiviteye başla
   const cr = { name: room.name, level: room.level, mode: room.mode, topic: room.topic, focusWords: common, code: room.code, members: room.members.map(m => ({ name: m.name })), size: room.members.length };
   for (const m of room.members) {
@@ -1037,7 +1085,9 @@ app.post("/friends/request", async (req, reply) => {
   const db = supa();
   if (!db) return reply.code(503).send({ error: "Arkadaş sistemi yakında." });
   const uname = String(req.body?.username || "").trim();
-  if (!uname) return reply.code(400).send({ error: "Kullanıcı adı gerekli." });
+  // Yalnız gerçek kullanıcı adı biçimi: PostgREST ilike'ta "*" da joker sayılır,
+  // kaçış listesinde yoktu → desenle var/yok yoklaması yapılabiliyordu.
+  if (!/^[A-Za-z0-9_]{3,20}$/.test(uname)) return reply.code(400).send({ error: "Kullanıcı adı gerekli." });
   // ilike ile büyük/küçük harf duyarsız; LIKE joker karakterlerini (% _ \) escape et.
   const esc = uname.replace(/([\\%_])/g, "\\$1");
   const { data: target } = await db.from("profiles").select("id,username,name").ilike("username", esc).maybeSingle();
@@ -1244,7 +1294,8 @@ app.post("/friends/invite", async (req, reply) => {
   if (!(await isAgeConfirmed(userId))) return reply.code(403).send({ error: AGE_ERR });
   const db = supa();
   if (!db) return reply.code(503).send({ error: "Arkadaş sistemi yakında." });
-  const { friendId, name, level, mode } = req.body || {};
+  const { friendId, name: nameRaw, level, mode } = req.body || {};
+  const name = temizAd(nameRaw);
   if (!friendId) return reply.code(400).send({ error: "friendId gerekli" });
   if (mod.areBlocked(userId, friendId)) return reply.code(403).send({ error: "Bu kullanıcıya davet gönderilemez." });
   // YETKİ: sadece gerçek arkadaşa davet gönderilebilir (rastgele userId'lere davet spam'i engellenir).

@@ -46,7 +46,7 @@ export function endVoiceRoom(name) {
   rooms.delete(name);
 }
 
-function currentSpeaker(vr) { return vr.order[vr.turnIdx] || null; }
+export function currentSpeaker(vr) { return vr.order[vr.turnIdx] || null; }
 
 export function stateFor(vr) {
   const sp = currentSpeaker(vr);

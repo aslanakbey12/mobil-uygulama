@@ -114,6 +114,19 @@ export function leaveRoom(userId) {
   if (room.members.length === 0) closeRoom(name);
 }
 
+// BOŞTA SÜPÜRÜCÜ (20 Eyl 2026). Kurulan oda üye çıkmadıkça hiç kapanmıyordu;
+// havuzlarıyla birlikte süresiz bellekte kalıyordu. 60 dk hareketsiz oda kapanır.
+// Hareket: kurulma, katılma; WS mesajları touchRoom ile uzatabilir.
+const IDLE_MS = 60 * 60 * 1000;
+export function touchRoom(roomName) { const r = rooms.get(roomName); if (r) r.lastActivity = Date.now(); }
+const supurucu = setInterval(() => {
+  const now = Date.now();
+  for (const [name, r] of rooms) {
+    if (now - (r.lastActivity || r.createdAt || 0) > IDLE_MS) closeRoom(name);
+  }
+}, 5 * 60 * 1000);
+supurucu.unref?.();
+
 export function roomStats() {
   return { openRooms: rooms.size, usersInRooms: userRoom.size };
 }
