@@ -10,6 +10,12 @@ revoke execute on function public.purge_old_data()            from public, anon,
 revoke execute on function public.touch_reading_cache(text)   from public, anon, authenticated;
 revoke execute on function public.purge_reading_cache()       from public, anon, authenticated;
 revoke execute on function public.touch_example_cache(text)   from public, anon, authenticated;
+-- Sunucu service_role ile çağırır; Supabase varsayılanı ona ayrıca grant verir,
+-- yine de açıkça yazıyoruz ki revoke sırası ne olursa olsun sunucu kilitlenmesin.
+grant execute on function public.purge_old_data()            to service_role;
+grant execute on function public.touch_reading_cache(text)   to service_role;
+grant execute on function public.purge_reading_cache()       to service_role;
+grant execute on function public.touch_example_cache(text)   to service_role;
 alter function public.purge_old_data()           set search_path = public;
 alter function public.touch_reading_cache(text)  set search_path = public;
 alter function public.purge_reading_cache()      set search_path = public;
@@ -43,5 +49,5 @@ returns void language sql security definer set search_path = public as $$
   delete from public.content_reports where created_at < now() - interval '730 days';
 $$;
 revoke execute on function public.purge_content_reports() from public, anon, authenticated;
--- purge_old_data'yı çağıran zamanlayıcı bunu da çağırsın (13_feedback_retention.sql'deki
--- cron satırına ekle):  select public.purge_content_reports();
+grant  execute on function public.purge_content_reports() to service_role;
+-- Sunucu günlük temizlikte (server.js purge) purge_old_data ile birlikte çağırır.
