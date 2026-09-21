@@ -1513,6 +1513,11 @@ app.listen({ port: PORT, host: "0.0.0.0" })
         (e) => app.log.error({ err: String(e?.message || e) },
           "veri saklama temizliği BAŞARISIZ — db/13_feedback_retention.sql uygulandı mı?")
       );
+      // İçerik bildirimleri 730 gün (db/23). Tablo/fonksiyon yoksa yalnız log.
+      db.rpc("purge_content_reports").then(
+        () => {},
+        (e) => app.log.warn({ err: String(e?.message || e) }, "content_reports temizliği çalışmadı — db/22 + db/23 uygulandı mı?")
+      );
     };
     purge();
     const purgeTimer = setInterval(purge, 24 * 60 * 60 * 1000);
