@@ -507,6 +507,74 @@ SADECE JSON döndür: {"definitionTr": string, "exampleTr": string}`;
   return out;
 }
 
+// PARÇA EKLERİ (27 Eyl 2026) — tek çağrıda iki yardımcı:
+//   1) sözlüğümüzde (words.json) OLMAYAN kelimelerin BU METİNDEKİ anlamı,
+//   2) her cümlenin doğal Türkçesi.
+// NEDEN: Kullanıcı parçada bilmediği kelimeye dokunup "Sözlükte yok" görüyordu
+// ("profesyonel durmuyor"); kelime kelime anlam da kalıplarda ve deyimlerde
+// yanıltıyordu ("cümle ne diyor, bir dokunuşla görsün"). Hangi kelimelerin
+// eksik olduğunu İSTEMCİ biliyor (sözlük orada), sunucu yalnız listeyi alıyor.
+// Parça üretimine EKLENMEDİ: üretim zaten yavaş; bu çağrı parça ekrana geldikten
+// sonra arka planda gidiyor, kullanıcı okurken hazır oluyor.
+// Önbellek parça metni + kelime listesiyle: aynı parça (paylaşılan önbellekten)
+// başka kullanıcıya düşünce model bir daha çağrılmıyor.
+const eklerCache = new Map();
+export function eklerOnbellekte(text, words) {
+  return eklerCache.has(eklerAnahtari(text, words));
+}
+function eklerAnahtari(text, words) {
+  return createHash("sha1").update(text + "|" + words.join(",")).digest("hex");
+}
+export async function readingExtras(text, words, sentences) {
+  const key = eklerAnahtari(text, words);
+  if (eklerCache.has(key)) return eklerCache.get(key);
+  if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
+  const prompt = `Türk İngilizce öğrencisi bir okuma parçası okuyor. Ona iki yardım hazırla.
+
+PARÇA:
+"""${text}"""
+
+1) KELİMELER — her biri için BU PARÇADAKİ anlamına göre: "base" (sözlük biçimi: decisions → decision, went → go), "tr" (kısa, doğal Türkçe karşılık, en fazla 4 kelime; parçadaki anlamı neyse o), "level" (CEFR: A1–C2). Özel isimse (kişi, yer, marka) tr = "özel isim".
+${words.length ? words.join(", ") : "(yok)"}
+
+2) CÜMLELER — her cümleyi sırayla doğal, akıcı Türkçeye çevir. Kelime kelime değil: kalıp ve deyimleri ANLAMIYLA ver. Tam ${sentences.length} çeviri, aynı sıra.
+${sentences.map((c, i) => (i + 1) + ". " + c).join("\n")}
+
+SADECE JSON: {"words": [{"en": string, "base": string, "tr": string, "level": string}], "sentences": [string]}`;
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 4000, thinkingConfig: { thinkingBudget: 0 } },
+  };
+  const txt = await geminiText(body, { timeout: 30000, tries: 2, prefer: UTIL_MODEL });
+  let parsed; try { parsed = JSON.parse(repairJson(extractJson(txt))); } catch (e) { throw new Error("AI yanıtı çözümlenemedi."); }
+  const out = eklerTemizle(parsed, words, sentences.length);
+  if (!out.words.length && !out.sentences.length) throw new Error("Yardımcılar üretilemedi.");
+  if (eklerCache.size >= 3000) eklerCache.delete(eklerCache.keys().next().value);
+  eklerCache.set(key, out);
+  return out;
+}
+
+// Model çıktısını süz: yalnız istenen kelimeler, anlamı boş olan atılır, seviye
+// A1–C2 değilse boş. Cümle sayısı tutmazsa hizalama bozuktur — yanlış cümlenin
+// çevirisini göstermektense hiç gösterme.
+export function eklerTemizle(parsed, words, cumleSayisi) {
+  const istenen = new Set(words.map((w) => String(w).toLowerCase()));
+  const seviye = (l) => (/^[ABC][12]$/.test(String(l || "").toUpperCase()) ? String(l).toUpperCase() : "");
+  return {
+    words: (Array.isArray(parsed?.words) ? parsed.words : [])
+      .map((w) => ({
+        en: String(w?.en || "").toLowerCase().trim().slice(0, 40),
+        base: String(w?.base || w?.en || "").toLowerCase().trim().slice(0, 40),
+        tr: String(w?.tr || "").trim().slice(0, 80),
+        level: seviye(w?.level),
+      }))
+      .filter((w) => w.en && w.tr && istenen.has(w.en)),
+    sentences: Array.isArray(parsed?.sentences) && parsed.sentences.length === cumleSayisi
+      ? parsed.sentences.map((c) => String(c || "").trim().slice(0, 400))
+      : [],
+  };
+}
+
 // Görsel arama sorgusu + "fotoğraflanabilir mi" kararı.
 // SORUN: Pexels'te ham kelimeyle arama yapınca soyut kelimeler ("although", "opinion")
 // için alakasız, çok anlamlı kelimeler için YANLIŞ fotoğraf geliyordu

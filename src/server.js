@@ -462,6 +462,33 @@ app.post("/reading/generate", async (req, reply) => {
   }
 });
 
+// Okuma parçası ekleri: sözlükte olmayan kelimelerin bu metindeki anlamı + cümle
+// çevirileri (tek çağrı, önbellekli — bkz. reading.readingExtras). Parça ekrana
+// gelince istemci arka planda çağırıyor; okuma kotasından DÜŞMEZ (parça zaten
+// düştü), ama küresel YZ freni ve kişi başı hız sınırı geçerli.
+app.post("/reading/extras", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (!reading.readingConfigured()) return reply.code(503).send({ error: "AI servisi yakında etkinleşecek." });
+  if (perUserLimited("reading-extras", userId, 12)) return reply.code(429).send({ error: "çok sık" });
+  const { passage, words } = req.body || {};
+  const text = String(passage || "").slice(0, 3000);
+  if (text.trim().length < 20) return reply.code(400).send({ error: "parça gerekli" });
+  const list = kelimeListesi(words, 40).map((w) => w.toLowerCase());
+  // Cümle bölme istemcidekiyle AYNI düzen (OkumaScreen `sentences`): çeviriler
+  // indeksle eşleşiyor, iki taraf farklı bölerse yanlış cümlenin Türkçesi çıkar.
+  const sentences = (text.match(/[^.!?]+[.!?]*\s*/g) || [text]).slice(0, 60);
+  const onbellekte = reading.eklerOnbellekte(text, list);
+  if (!onbellekte && !aiquota.underGlobalCap()) return reply.code(429).send({ error: "Şu an yoğunluk var, biraz sonra tekrar dene." });
+  try {
+    const ekler = await reading.readingExtras(text, list, sentences);
+    if (!onbellekte) aiquota.bumpGlobal(1);
+    return ekler;
+  } catch (e) {
+    return yzHatasi(reply, e, app.log);
+  }
+});
+
 // Hafıza kancası: bir kelime için akılda tutmayı kolaylaştıran kısa Türkçe ipucu üret
 app.post("/word/mnemonic", async (req, reply) => {
   const userId = getUserId(req);
