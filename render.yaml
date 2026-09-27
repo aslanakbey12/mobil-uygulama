@@ -36,7 +36,7 @@ services:
       - key: READING_DAILY_CAP
         value: "3"
       - key: READING_DAILY_CAP_PREMIUM
-        value: "30"
+        value: "5"
       # ÜRETİM: 0 olmalı. 1 iken isPremium() HERKES için true döner → paywall/kota devre dışı, gelir 0.
       - key: DEV_PREMIUM
         value: "0"

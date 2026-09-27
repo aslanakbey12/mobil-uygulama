@@ -471,6 +471,11 @@ app.post("/reading/extras", async (req, reply) => {
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!reading.readingConfigured()) return reply.code(503).send({ error: "AI servisi yakında etkinleşecek." });
   if (perUserLimited("reading-extras", userId, 12)) return reply.code(429).send({ error: "çok sık" });
+  // GÜNLÜK SINIR (denetim 28 Eyl): uç keyfî metin kabul ediyor; dakikalık sınır
+  // tek başına bir hesabın günde binlerce çağrıyla küresel YZ tavanını
+  // doldurmasına (herkesin okuma/koçunu durdurmasına) izin veriyordu. Okuma
+  // günde birkaç parça; 40 fazlasıyla yeter.
+  if (perUserLimited("reading-extras-gun", userId, 40, 24 * 60 * 60 * 1000)) return reply.code(429).send({ error: "Bugünlük sınır doldu" });
   const { passage, words } = req.body || {};
   const text = String(passage || "").slice(0, 3000);
   if (text.trim().length < 20) return reply.code(400).send({ error: "parça gerekli" });
