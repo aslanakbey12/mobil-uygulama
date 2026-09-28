@@ -822,7 +822,11 @@ export async function getOrCreateReport(userId, { profile, stats, behaviour, pre
   // Kural: geçen haftanın raporu duruyorsa bu hafta üretme, onu göstermeye
   // devam et. Böylece üretilen/atlanan haftalar dönüşümlü oluyor. `history`
   // zaten `lte(week, wk)` ile geldiği için ek sorgu yok.
-  if (!premium) {
+  // PREMIUM SATIŞTA DEĞİLKEN HERKESE HAFTALIK (kullanıcı kararı 28 Eyl 2026):
+  // abonelik alınamıyorken "ücretsiz planda iki haftada bir" demek, satılmayan
+  // bir planın cezasını kesmek. Premium açılınca PREMIUM_SATISTA=1 → ücretsizde
+  // yine iki haftada bir. Maliyet: ~$4,6/ay (config notu).
+  if (!premium && process.env.PREMIUM_SATISTA === "1") {
     const gecen = aralikliRapor(wk, history);
     // Hafta anahtarı DA geçen haftanınki dönüyor: istemci raporun hangi haftayı
     // anlattığını yazıyor, bu haftanın anahtarıyla göndermek yalan olurdu.
