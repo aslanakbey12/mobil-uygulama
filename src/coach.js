@@ -423,7 +423,10 @@ export const ACTIONS = {
   swipe:    "Kelimeler bölümünde yeni kelime keşfet",
   practice: "Alıştırma turu yap (SRS tekrarları)",
   reading:  "Seviyene uygun bir okuma parçası oku",
-  // listening GEÇİCİ OLARAK ÇIKARILDI. Dinleme bölümü istemcide "çok yakında"
+  // listening GERİ GELDİ (28 Eyl 2026): kütüphane her seviyede parça taşıyor ve
+  // Beceriler'de açık; istemcide rota coachroutes.js'te (BeceriTab › Dinleme).
+  listening: "Seviyene uygun bir dinleme parçası dinle",
+  // Eski not — listening bir süre ÇIKARILMIŞTI. Dinleme bölümü istemcide "çok yakında"
   // olarak gösteriliyor (kütüphane dört parça; bitiren kullanıcı duvara
   // çarpıyor). Burada bırakılsaydı koç, kapalı gösterilen bir bölüme
   // yönlendiren bir plan yazabilirdi — kullanıcı için çelişki, bizim için

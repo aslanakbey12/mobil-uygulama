@@ -395,7 +395,8 @@ app.addHook("onRequest", async (req, reply) => {
   if (req.method === "OPTIONS") { reply.code(204).send(); return; }
   // Global flood koruması (IP başına, cömert eşik). /health (warmup) ve /ws (yeniden bağlanma) muaf.
   const u = req.url || "";
-  if (!u.startsWith("/health") && !u.startsWith("/ws")) {
+  // Muafiyet yalnız çıplak /health: /health/detay anahtarlı, deneme-yanılmaya açık kalmasın.
+  if (!/^\/health(\?|$)/.test(u) && !u.startsWith("/ws")) {
     if (rateLimited(req.ip)) return reply.code(429).send({ error: "Çok fazla istek. Lütfen biraz sonra tekrar dene." });
   }
 });
@@ -409,7 +410,19 @@ app.setErrorHandler((err, req, reply) => {
   reply.code(st).send({ error: st >= 500 ? "Sunucu hatası, birazdan tekrar dene." : String(err.message || "geçersiz istek").slice(0, 200) });
 });
 
-app.get("/health", async () => ({
+// HERKESE AÇIK SAĞLIK: yalnız ayakta mı + hangi sürüm. Ayrıntılar (kuyruklar,
+// oda/soket sayısı, günlük YZ harcaması, hangi servis kapalı) herkese açıktı —
+// saldırgana "YZ tavanı dolmak üzere, şimdi yüklen" diyen bir pano (denetim 28 Eyl).
+app.get("/health", async () => ({ ok: true, surum: (process.env.RENDER_GIT_COMMIT || "dev").slice(0, 7) }));
+
+// Ayrıntılı sağlık: x-saglik-anahtari başlığı SAGLIK_ANAHTARI ile eşleşmeli;
+// anahtar tanımlı değilse uç yok (404).
+app.get("/health/detay", async (req, reply) => {
+  const anahtar = process.env.SAGLIK_ANAHTARI;
+  if (!anahtar || !tokenEsit(req.headers["x-saglik-anahtari"], anahtar)) return reply.code(404).send({ error: "bulunamadı" });
+  return saglikDetay();
+});
+const saglikDetay = () => ({
   ok: true,
   // HANGİ SÜRÜM ÇALIŞIYOR. Deploy sonrası "indi mi" sorusunun tek dürüst
   // cevabı buydu ve yoktu: /health hep aynı şeyi döndürdüğü için eski kod da
@@ -427,7 +440,7 @@ app.get("/health", async () => ({
   league: league.leagueStats(),
   // Sistem geneli günlük YZ harcaması — freni izleyebilelim (kaç/tavan)
   ai: aiquota.globalUsage()
-}));
+});
 
 // Okuma: kullanıcının öğrenme kelimelerinden seviyesine uygun parça + sorular üret
 app.post("/reading/generate", async (req, reply) => {
@@ -450,7 +463,9 @@ app.post("/reading/generate", async (req, reply) => {
   // artar, metin "kelime tıkıştırılmış" olmaktan çıkar. Sunucu da kesiyor:
   // istemcinin gönderdiği sayıya güvenmek, maliyeti istemciye emanet etmek olurdu.
   const list = kelimeListesi(words, 3);
-  const known = kelimeListesi(knownSample, 15);
+  // TEK KELİME, kısa: knownSample önbellek anahtarına ve isteme giriyor; boşluklu
+  // "kelime" (bir cümle) paylaşılan önbelleğe talimat taşıyabiliyordu.
+  const known = kelimeListesi(knownSample, 15).filter((w) => /^[A-Za-z][A-Za-z'-]{1,24}$/.test(w));
   const theme = String(topic || "").slice(0, 60);
   if (list.length < 1) return reply.code(400).send({ error: "Yeterli kelime yok. Önce Kelimeler'de birkaç kelime çalış." });
   try {

@@ -83,7 +83,7 @@ describe("hafta anahtarı", () => {
 // resolveMode'daki beyaz liste mantığının aynısı.
 describe("koç eylemleri", () => {
   test("bilinen eylem türleri katalogda", () => {
-    for (const k of ["swipe", "practice", "reading", "grammar"]) {
+    for (const k of ["swipe", "practice", "reading", "grammar", "listening"]) {
       assert.ok(ACTIONS[k], `${k} katalogda yok`);
     }
   });
@@ -102,7 +102,7 @@ describe("koç eylemleri", () => {
     //              "sunum senaryosu başlat" adımı üretip uyuyan ekranı açmıştı.
     //
     // Hepsi geri gelecek; istemcideki karşılıkları da AYNI ANDA açılmalı.
-    for (const k of ["listening", "friends", "social", "scenario"]) {
+    for (const k of ["friends", "social", "scenario"]) {
       assert.equal(ACTIONS[k], undefined, `${k} hâlâ katalogda`);
     }
   });
@@ -121,7 +121,8 @@ describe("koç eylemleri", () => {
     //       çalışıyor ama karşı taraf yok
     //   4 — senaryo uykuya alındı (18 Eyl 2026): Beceriler'de "çok yakında",
     //       koç yine de plan adımı üretip uyuyan ekranı açıyordu
-    assert.equal(Object.keys(ACTIONS).length, 4);
+    //   5 — dinleme geri geldi (28 Eyl 2026; kütüphane her seviyede, Beceriler'de açık)
+    assert.equal(Object.keys(ACTIONS).length, 5);
   });
 
   test("eylem açıklamaları BOŞ olamaz — model neyi seçtiğini bilmeli", () => {
