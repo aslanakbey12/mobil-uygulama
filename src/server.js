@@ -1,6 +1,7 @@
 // Sesli tartışma odaları — eşleştirme + LiveKit token + moderasyon servisi.
 // Kimlik: Supabase JWT (üretim) ya da dev yedeği (userId body/query/header).
 import Fastify from "fastify";
+import { premiumKarari } from "./premiumkarar.js";
 import { timingSafeEqual } from "node:crypto";
 import websocket from "@fastify/websocket";
 import { originIzinli } from "./cors.js";
@@ -583,6 +584,9 @@ app.post("/ai/report", async (req, reply) => {
   const userId = getUserId(req);
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (perUserLimited("feedback", userId, 20)) return reply.code(429).send({ error: "çok sık" });
+  // Günlük tavan: dakikalık sınır tek hesabın günde ~28 bin satır yazıp ücretsiz
+  // veritabanını doldurmasına izin veriyordu. Gerçek kullanıcı günde birkaç bildirir.
+  if (perUserLimited("yz-bildir-gun", userId, 30, 24 * 60 * 60 * 1000)) return reply.code(429).send({ error: "Bugünlük bildirim sınırı doldu" });
   const { kind, ref, reason, note } = req.body || {};
   if (!reading.YZ_BILDIRIM_TURLERI.includes(kind) || !ref || !reading.YZ_BILDIRIM_SEBEPLERI.includes(reason)) {
     return reply.code(400).send({ error: "tür, ref ve geçerli sebep gerekli" });
@@ -1486,13 +1490,9 @@ app.post("/webhooks/revenuecat", async (req, reply) => {
   }
   const ev = req.body?.event || {};
   const uid = ev.app_user_id;
-  const ACTIVE = ["INITIAL_PURCHASE", "RENEWAL", "PRODUCT_CHANGE", "UNCANCELLATION", "NON_RENEWING_PURCHASE"];
-  const INACTIVE = ["EXPIRATION", "CANCELLATION", "SUBSCRIPTION_PAUSED", "BILLING_ISSUE"];
-  let yazildi = null;
-  if (uid) {
-    if (ACTIVE.includes(ev.type)) yazildi = await setPremium(uid, true, ev.expiration_at_ms ? new Date(ev.expiration_at_ms).toISOString() : null);
-    else if (INACTIVE.includes(ev.type)) yazildi = await setPremium(uid, false, null);
-  }
+  // Karar core'da (premiumkarar.js, testli): iptal/ödeme sorunu dönem sonuna kadar açık.
+  const karar = uid ? premiumKarari(ev) : null;
+  const yazildi = karar ? await setPremium(uid, karar.premium, karar.bitis) : null;
   // SONUCU DA LOGLA. Eskiden yalnizca "olay geldi" yaziliyordu; yazmanin
   // BASARILI olup olmadigi hicbir yerde gorunmuyordu. Odeme akisinda
   // "istegi aldim" ile "hakki verdim" arasindaki fark her seydir.
@@ -1509,6 +1509,10 @@ app.post("/account/delete", async (req, reply) => {
   leaveRoom(userId);
   const s = supa();
   if (s) {
+    // content_reports'ta FK yok (user_id "hesap silinince null kalır" diye
+    // yazılmıştı ama bunu yapan kod yoktu): bildirim kayıtları kimliği taşıyarak
+    // 2 yıl kalıyordu. Silmeden önce kimlik düşürülüyor (denetim 28 Eyl).
+    try { await s.from("content_reports").update({ user_id: null }).eq("user_id", userId); } catch (_) {}
     try { await s.auth.admin.deleteUser(userId); }
     catch (e) { return reply.code(500).send({ error: String(e.message || e) }); }
   }

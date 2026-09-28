@@ -849,8 +849,10 @@ export async function reportReading(key, reason, note, userId) {
 // YZ İÇERİĞİ BİLDİRİMİ — okuma parçasının dışında kalan YZ çıktıları (denetim
 // 28 Eyl): koç raporu ve okuma ekleri (sözlükte olmayan kelimenin anlamı,
 // cümlenin Türkçesi). Play'in "YZ ile üretilen içerik" şartı bütün YZ çıktısı
-// için: kullanıcı gördüğü yerde bildirebilmeli. Bunların sunucuda önbelleği yok
-// (koç raporu kişiye özel, ekler istemcide saklanıyor) — yalnız kayıt.
+// için: kullanıcı gördüğü yerde bildirebilmeli. Koç raporu kişiye özel; ekler
+// sunucuda eklerCache'te (metin+kelime anahtarıyla) paylaşılıyor ama bildirimin
+// ref'i parça anahtarı olduğu için buradan düşürülemiyor — kayıt, bildirilen metni
+// (note) taşıyor; önbellek süreç yeniden başlayınca boşalır.
 export const YZ_BILDIRIM_TURLERI = ["coach", "reading_extra"];
 export const YZ_BILDIRIM_SEBEPLERI = ["uygunsuz", "hatali", "diger"];
 export async function reportAi(kind, ref, reason, note, userId) {
@@ -859,7 +861,7 @@ export async function reportAi(kind, ref, reason, note, userId) {
   if (db) {
     db.from("content_reports")
       .insert({ kind, ref: String(ref).slice(0, 300), user_id: userId || null, reason, note: String(note || "").slice(0, 300) || null })
-      .then(() => {}, () => {});
+      .then((r) => { if (r?.error) console.warn("content_reports yazılamadı:", r.error.message); }, (e) => console.warn("content_reports yazılamadı:", e?.message));
   }
   return { ok: true };
 }
