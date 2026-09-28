@@ -578,6 +578,18 @@ app.post("/reading/report", async (req, reply) => {
   return reading.reportReading(String(key).slice(0, 160), reason, note, userId);
 });
 
+// YZ içeriği bildirimi — koç raporu, okuma ekleri (bkz. reading.reportAi)
+app.post("/ai/report", async (req, reply) => {
+  const userId = getUserId(req);
+  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
+  if (perUserLimited("feedback", userId, 20)) return reply.code(429).send({ error: "çok sık" });
+  const { kind, ref, reason, note } = req.body || {};
+  if (!reading.YZ_BILDIRIM_TURLERI.includes(kind) || !ref || !reading.YZ_BILDIRIM_SEBEPLERI.includes(reason)) {
+    return reply.code(400).send({ error: "tür, ref ve geçerli sebep gerekli" });
+  }
+  return reading.reportAi(kind, String(ref).slice(0, 300), reason, note, userId);
+});
+
 // Gramer dersi geri bildirimi — "anlatım yeterli miydi?" (bkz. reading.rateGrammar)
 app.post("/grammar/rate", async (req, reply) => {
   const userId = getUserId(req);

@@ -846,6 +846,24 @@ export async function reportReading(key, reason, note, userId) {
   return { ok: true, ...r };
 }
 
+// YZ İÇERİĞİ BİLDİRİMİ — okuma parçasının dışında kalan YZ çıktıları (denetim
+// 28 Eyl): koç raporu ve okuma ekleri (sözlükte olmayan kelimenin anlamı,
+// cümlenin Türkçesi). Play'in "YZ ile üretilen içerik" şartı bütün YZ çıktısı
+// için: kullanıcı gördüğü yerde bildirebilmeli. Bunların sunucuda önbelleği yok
+// (koç raporu kişiye özel, ekler istemcide saklanıyor) — yalnız kayıt.
+export const YZ_BILDIRIM_TURLERI = ["coach", "reading_extra"];
+export const YZ_BILDIRIM_SEBEPLERI = ["uygunsuz", "hatali", "diger"];
+export async function reportAi(kind, ref, reason, note, userId) {
+  if (!YZ_BILDIRIM_TURLERI.includes(kind) || !ref || !YZ_BILDIRIM_SEBEPLERI.includes(reason)) return { ok: false };
+  const db = supa();
+  if (db) {
+    db.from("content_reports")
+      .insert({ kind, ref: String(ref).slice(0, 300), user_id: userId || null, reason, note: String(note || "").slice(0, 300) || null })
+      .then(() => {}, () => {});
+  }
+  return { ok: true };
+}
+
 // GRAMER DERSİ GERİ BİLDİRİMİ — "anlatım yeterli miydi?" (19 Eyl 2026). Sayaç
 // content_feedback'te (kind=grammar, ref=konu id); "hayır" sebebi
 // content_reports'a. Okuma oyundan farkı: önbellek yok, silinecek parça yok —
