@@ -45,6 +45,9 @@ const READING_MODEL = process.env.READING_MODEL || "";
 // OPENROUTER_API_KEY yoksa çağrı düşer ve zincir Gemini'ye geçer, yani
 // yapılandırılmamış bir kurulumda bozulma olmuyor.
 export const UTIL_MODEL = process.env.UTIL_MODEL || "deepseek/deepseek-v4-pro";
+// Parça ekleri (çeviri + bağlam): kullanıcı okurken bekliyor, HIZ önemli. UTIL_MODEL
+// (deepseek-v4-pro) 20 cümlelik parçada ~40 sn sürüp bozuk JSON veriyordu (29 Eyl ölçüm).
+export const EKLER_MODEL = process.env.EKLER_MODEL || MODEL;
 // Günlük okuma üretimi tavanı — KADEMEYE DUYARLI.
 //
 // Eskiden tek sayıydı (20) ve premium'a bakmıyordu. İki ayrı sorun yaratıyordu:
@@ -519,18 +522,28 @@ SADECE JSON döndür: {"definitionTr": string, "exampleTr": string}`;
 // sonra arka planda gidiyor, kullanıcı okurken hazır oluyor.
 // Önbellek parça metni + kelime listesiyle: aynı parça (paylaşılan önbellekten)
 // başka kullanıcıya düşünce model bir daha çağrılmıyor.
+// 29 Eyl 2026 — İKİ DÜZELTME + BİR EK (kullanıcı: "tıklıyorum, çıkmıyor"):
+//   • Çağrı ~40 sn sürüyor ve bozuk JSON'la bitiyordu; istemci 25 sn'de
+//     vazgeçtiği için "Bu cümle ne diyor?" hiç görünmüyordu. Model artık hızlı
+//     olan (MODEL, Gemini Flash; düşünme kapalı) ve istemci bu yolu yavaş sayıyor.
+//   • Çeviriler dizi değil {i, tr}: model bir cümleyi atlayınca ESKİDEN hepsi
+//     atılıyordu (sayı tutmuyor → kayma korkusu). İndeksle eşleşince yalnız
+//     atlanan cümle boş kalır, kayma olmaz.
+//   • BAĞLAM ANLAMI: istemcinin seçtiği "hedef" kelimeler (seviyenin üstü ya da
+//     henüz bilinmeyen) için BU CÜMLEDEKİ anlam + Türkçe cümlede karşılık gelen
+//     parça. Kutuda "bu cümlede: yönetmek" ve çeviride o parça kalın. Yalnız
+//     hedeflere yapılıyor: her kelimeye yapmak çıktıyı katlıyordu.
+// Önbellek parça metni + kelime listesi + hedeflerle: aynı parça (paylaşılan
+// önbellekten) başka kullanıcıya düşünce model bir daha çağrılmıyor.
 const eklerCache = new Map();
-export function eklerOnbellekte(text, words) {
-  return eklerCache.has(eklerAnahtari(text, words));
+export function eklerOnbellekte(text, words, hedef = []) {
+  return eklerCache.has(eklerAnahtari(text, words, hedef));
 }
-function eklerAnahtari(text, words) {
-  return createHash("sha1").update(text + "|" + words.join(",")).digest("hex");
+function eklerAnahtari(text, words, hedef = []) {
+  return createHash("sha1").update(text + "|" + words.join(",") + "|" + hedef.map((h) => h.i + ":" + h.en).join(",")).digest("hex");
 }
-export async function readingExtras(text, words, sentences) {
-  const key = eklerAnahtari(text, words);
-  if (eklerCache.has(key)) return eklerCache.get(key);
-  if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
-  const prompt = `Türk İngilizce öğrencisi bir okuma parçası okuyor. Ona iki yardım hazırla.
+export function eklerIstemi(text, words, sentences, hedef = []) {
+  return `Türk İngilizce öğrencisi bir okuma parçası okuyor. Ona yardım hazırla.
 
 PARÇA:
 """${text}"""
@@ -538,29 +551,66 @@ PARÇA:
 1) KELİMELER — her biri için BU PARÇADAKİ anlamına göre: "base" (sözlük biçimi: decisions → decision, went → go), "tr" (kısa, doğal Türkçe karşılık, en fazla 4 kelime; parçadaki anlamı neyse o), "level" (CEFR: A1–C2). Özel isimse (kişi, yer, marka) tr = "özel isim".
 ${words.length ? words.join(", ") : "(yok)"}
 
-2) CÜMLELER — her cümleyi sırayla doğal, akıcı Türkçeye çevir. Kelime kelime değil: kalıp ve deyimleri ANLAMIYLA ver. Tam ${sentences.length} çeviri, aynı sıra.
-${sentences.map((c, i) => (i + 1) + ". " + c).join("\n")}
+2) CÜMLELER — her cümleyi doğal, akıcı Türkçeye çevir. Kelime kelime değil: kalıp ve deyimleri ANLAMIYLA ver. Her çeviri {"i": cümle numarası, "tr": çeviri}.
+${sentences.map((c, i) => (i + 1) + ". " + c.trim()).join("\n")}
 
-SADECE JSON: {"words": [{"en": string, "base": string, "tr": string, "level": string}], "sentences": [string]}`;
+3) BAĞLAM — aşağıdaki her kelime için, verilen numaralı cümlede: "tr" = kelimenin BU CÜMLEDEKİ anlamı (sözlük biçiminde, en fazla 4 kelime); "parca" = 2. adımda yazdığın o cümlenin Türkçesinde bu kelimeye karşılık gelen kısım, çeviriden HARFİ HARFİNE kopyala (çekimli hâliyle, en fazla 4 kelime). Karşılığı çeviride tek bir yerde yoksa parca = "".
+${hedef.length ? hedef.map((h) => `${h.en} (cümle ${h.i + 1})`).join(", ") : "(yok)"}
+
+SADECE JSON: {"words": [{"en": string, "base": string, "tr": string, "level": string}], "sentences": [{"i": number, "tr": string}], "baglam": [{"en": string, "i": number, "tr": string, "parca": string}]}`;
+}
+export async function readingExtras(text, words, sentences, hedef = []) {
+  const key = eklerAnahtari(text, words, hedef);
+  if (eklerCache.has(key)) return eklerCache.get(key);
+  if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 4000, thinkingConfig: { thinkingBudget: 0 } },
+    contents: [{ parts: [{ text: eklerIstemi(text, words, sentences, hedef) }] }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 8000, thinkingConfig: { thinkingBudget: 0 } },
   };
-  const txt = await geminiText(body, { timeout: 30000, tries: 2, prefer: UTIL_MODEL });
-  let parsed; try { parsed = JSON.parse(repairJson(extractJson(txt))); } catch (e) { throw new Error("AI yanıtı çözümlenemedi."); }
-  const out = eklerTemizle(parsed, words, sentences.length);
-  if (!out.words.length && !out.sentences.length) throw new Error("Yardımcılar üretilemedi.");
+  const txt = await geminiText(body, { timeout: 30000, tries: 2, prefer: EKLER_MODEL });
+  // repairJson NESNE döndürüyor. Eskiden JSON.parse(repairJson(…)) yazılıydı: nesne
+  // "[object Object]" dizesine dönüp HER ÇAĞRIDA patlıyordu — özellik 27 Eyl'den beri
+  // hiç çalışmadı (29 Eyl ölçüm; testler yalnız eklerTemizle'yi sınıyordu).
+  const temiz = extractJson(txt);
+  let parsed; try { parsed = JSON.parse(temiz); } catch (e) { try { parsed = repairJson(temiz); } catch (_) { throw new Error("AI yanıtı çözümlenemedi."); } }
+  const out = eklerTemizle(parsed, words, sentences.length, hedef);
+  if (!out.words.length && !out.sentences.some(Boolean)) throw new Error("Yardımcılar üretilemedi.");
   if (eklerCache.size >= 3000) eklerCache.delete(eklerCache.keys().next().value);
   eklerCache.set(key, out);
   return out;
 }
 
 // Model çıktısını süz: yalnız istenen kelimeler, anlamı boş olan atılır, seviye
-// A1–C2 değilse boş. Cümle sayısı tutmazsa hizalama bozuktur — yanlış cümlenin
-// çevirisini göstermektense hiç gösterme.
-export function eklerTemizle(parsed, words, cumleSayisi) {
+// A1–C2 değilse boş. Cümleler NUMARAYLA yerine konur (atlanan boş kalır, kayma
+// yok); numarasız eski biçim (düz dizi) yalnız sayı tutarsa kabul. Bağlamda
+// "parca" çeviride GERÇEKTEN geçmiyorsa atılır — kalın yazılacak yer bulunamaz.
+export function eklerTemizle(parsed, words, cumleSayisi, hedef = []) {
   const istenen = new Set(words.map((w) => String(w).toLowerCase()));
   const seviye = (l) => (/^[ABC][12]$/.test(String(l || "").toUpperCase()) ? String(l).toUpperCase() : "");
+  const ham = Array.isArray(parsed?.sentences) ? parsed.sentences : [];
+  let sentences = [];
+  if (ham.length && ham.every((c) => typeof c === "string")) {
+    if (ham.length === cumleSayisi) sentences = ham.map((c) => String(c || "").trim().slice(0, 400));
+  } else if (ham.length) {
+    sentences = Array(cumleSayisi).fill("");
+    for (const c of ham) {
+      const i = Number(c?.i) - 1;
+      if (Number.isInteger(i) && i >= 0 && i < cumleSayisi && !sentences[i]) sentences[i] = String(c?.tr || "").trim().slice(0, 400);
+    }
+    if (!sentences.some(Boolean)) sentences = [];
+  }
+  const hedefSet = new Set(hedef.map((h) => h.i + ":" + h.en));
+  const kucuk = (x) => String(x || "").toLocaleLowerCase("tr");
+  const baglam = (Array.isArray(parsed?.baglam) ? parsed.baglam : [])
+    .map((b) => {
+      const i = Number(b?.i) - 1;
+      const en = String(b?.en || "").toLowerCase().trim().slice(0, 40);
+      const tr = String(b?.tr || "").trim().slice(0, 60);
+      let parca = String(b?.parca || "").trim().slice(0, 60);
+      if (parca && !kucuk(sentences[i]).includes(kucuk(parca))) parca = "";
+      return { en, i, tr, parca };
+    })
+    .filter((b) => b.tr && hedefSet.has(b.i + ":" + b.en));
   return {
     words: (Array.isArray(parsed?.words) ? parsed.words : [])
       .map((w) => ({
@@ -570,9 +620,8 @@ export function eklerTemizle(parsed, words, cumleSayisi) {
         level: seviye(w?.level),
       }))
       .filter((w) => w.en && w.tr && istenen.has(w.en)),
-    sentences: Array.isArray(parsed?.sentences) && parsed.sentences.length === cumleSayisi
-      ? parsed.sentences.map((c) => String(c || "").trim().slice(0, 400))
-      : [],
+    sentences,
+    baglam,
   };
 }
 

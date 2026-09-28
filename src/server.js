@@ -492,17 +492,23 @@ app.post("/reading/extras", async (req, reply) => {
   // doldurmasına (herkesin okuma/koçunu durdurmasına) izin veriyordu. Okuma
   // günde birkaç parça; 40 fazlasıyla yeter.
   if (perUserLimited("reading-extras-gun", userId, 40, 24 * 60 * 60 * 1000)) return reply.code(429).send({ error: "Bugünlük sınır doldu" });
-  const { passage, words } = req.body || {};
+  const { passage, words, hedef } = req.body || {};
   const text = String(passage || "").slice(0, 3000);
   if (text.trim().length < 20) return reply.code(400).send({ error: "parça gerekli" });
   const list = kelimeListesi(words, 40).map((w) => w.toLowerCase());
   // Cümle bölme istemcidekiyle AYNI düzen (OkumaScreen `sentences`): çeviriler
   // indeksle eşleşiyor, iki taraf farklı bölerse yanlış cümlenin Türkçesi çıkar.
   const sentences = (text.match(/[^.!?]+[.!?]*\s*/g) || [text]).slice(0, 60);
-  const onbellekte = reading.eklerOnbellekte(text, list);
+  // BAĞLAM HEDEFLERİ (29 Eyl): istemcinin seçtiği kelime + cümle numarası; bu
+  // cümledeki anlamı ve çeviride karşılık gelen parça istenir. Tek kelime, 30 tavan.
+  const hedefler = (Array.isArray(hedef) ? hedef : [])
+    .map((h) => ({ en: String(h?.en || "").toLowerCase().trim(), i: Number(h?.i) }))
+    .filter((h) => /^[a-z][a-z'-]{1,29}$/.test(h.en) && Number.isInteger(h.i) && h.i >= 0 && h.i < sentences.length)
+    .slice(0, 30);
+  const onbellekte = reading.eklerOnbellekte(text, list, hedefler);
   if (!onbellekte && !aiquota.underGlobalCap()) return reply.code(429).send({ error: "Şu an yoğunluk var, biraz sonra tekrar dene." });
   try {
-    const ekler = await reading.readingExtras(text, list, sentences);
+    const ekler = await reading.readingExtras(text, list, sentences, hedefler);
     if (!onbellekte) aiquota.bumpGlobal(1);
     return ekler;
   } catch (e) {
