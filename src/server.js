@@ -1254,12 +1254,15 @@ app.post("/push/register", async (req, reply) => {
 // KİMLİKLİ ve kullanıcı başına sınırlı: kimliksizken her istek 2,5 KB log
 // yazıyordu — tek IP Render log kotasını doldurup gerçek hataları gömebilirdi.
 app.post("/client-error", async (req, reply) => {
+  // MİSAFİR DE RAPORLAYABİLİR (29 Eyl 2026). Eskiden kimliksiz istek 401 alıyordu;
+  // kullanıcıların çoğu hesapsız başladığı için çökmelerin çoğu hiç görünmüyordu
+  // (Sentry de kapalı). Misafirde sınır IP başına ve daha sıkı; kayıtta kimlik yok.
   const userId = getUserId(req);
-  if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
-  if (perUserLimited("client-error", userId, CLIENT_ERROR_MAX)) return reply.code(429).send({ error: "çok fazla rapor" });
+  const anahtar = userId || `misafir:${req.ip}`;
+  if (perUserLimited("client-error", anahtar, userId ? CLIENT_ERROR_MAX : Math.min(CLIENT_ERROR_MAX, 10))) return reply.code(429).send({ error: "çok fazla rapor" });
   const { message, stack, screen, version } = req.body || {};
   app.log.error({
-    userId, screen: String(screen || "").slice(0, 60), version: String(version || "").slice(0, 20),
+    userId: userId || null, misafir: !userId, screen: String(screen || "").slice(0, 60), version: String(version || "").slice(0, 20),
     message: String(message || "").slice(0, 500), stack: String(stack || "").slice(0, 1000),
   }, "client-error");
   return { ok: true };
