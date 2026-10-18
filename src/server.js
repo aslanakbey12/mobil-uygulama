@@ -3,6 +3,7 @@
 import Fastify from "fastify";
 import { premiumKarari } from "./premiumkarar.js";
 import { timingSafeEqual } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import websocket from "@fastify/websocket";
 import { originIzinli } from "./cors.js";
 import * as mm from "./matchmaking.js";
@@ -82,6 +83,14 @@ const app = Fastify({
       },
     },
   },
+});
+
+// KAYITLI ROTALAR: test/uclar_yetki.test.js her ucu kimliksiz çağırıp 401
+// bekliyor. Liste elle yazılmıyor, yönlendiricinin kendisinden toplanıyor —
+// yeni eklenen uç kendiliğinden teste girer. (Rotalardan ÖNCE eklenmeli.)
+export const rotalar = [];
+app.addHook("onRoute", (r) => {
+  for (const m of [].concat(r.method)) if (m !== "HEAD") rotalar.push({ method: m, url: r.url });
 });
 
 // WebSocket eklentisi (anlık eşleşme + odadan çıkarma bildirimi)
@@ -428,7 +437,13 @@ app.setErrorHandler((err, req, reply) => {
 // HERKESE AÇIK SAĞLIK: yalnız ayakta mı + hangi sürüm. Ayrıntılar (kuyruklar,
 // oda/soket sayısı, günlük YZ harcaması, hangi servis kapalı) herkese açıktı —
 // saldırgana "YZ tavanı dolmak üzere, şimdi yüklen" diyen bir pano (denetim 28 Eyl).
-app.get("/health", async () => ({ ok: true, surum: (process.env.RENDER_GIT_COMMIT || "dev").slice(0, 7) }));
+// ?xff=1: çağıranın KENDİ X-Forwarded-For zinciri — Render'ın önünde kaç vekil
+// olduğunu canlıda ölçmek için (trustProxy hop sayısı buna bağlı). Başkasının
+// verisi yok; whatismyip kadar zararsız.
+app.get("/health", async (req) => ({
+  ok: true, surum: (process.env.RENDER_GIT_COMMIT || "dev").slice(0, 7),
+  ...(req.query?.xff ? { xff: String(req.headers["x-forwarded-for"] || ""), soket: req.socket?.remoteAddress, ip: req.ip } : {}),
+}));
 
 // Ayrıntılı sağlık: x-saglik-anahtari başlığı SAGLIK_ANAHTARI ile eşleşmeli;
 // anahtar tanımlı değilse uç yok (404).
@@ -1592,7 +1607,10 @@ app.addHook("onResponse", async (req, reply) => {
 });
 
 // ── AÇILIŞ / KAPANIŞ ──────────────────────────────────────────────────────────
-app.listen({ port: PORT, host: "0.0.0.0" })
+// Doğrudan çalıştırıldığında dinle; testte (import) yalnız app dışa verilir.
+export { app };
+const anaModul = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (anaModul) app.listen({ port: PORT, host: "0.0.0.0" })
   .then(async () => {
     app.log.info(`Sunucu http://localhost:${PORT} üzerinde çalışıyor`);
     // Kotaları kalıcı depodan yükle (dağıtım/uyku kotayı sıfırlamasın) + periyodik yazma
