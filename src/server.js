@@ -55,6 +55,8 @@ const AGE_ERR = "Sosyal odalar 16 yaş ve üzeri içindir. Kelime çalışma bö
 import { canEnterRoom, recordRoomEntry, roomsUsedToday, freeDailyLimit } from "./quota.js";
 import { pickTopic } from "./topics.js";
 import { getRoom, roomStats, leaveRoom, createHostedRoom, getRoomByCode, addMember, createAiRoom, onRoomClose } from "./rooms.js";
+import { sozlukte } from "./sozluk.js";
+import { sosyalYolMu } from "./sosyal.js";
 
 // Logger: istek URL'lerindeki token/access_token query paramlarını REDAKTE et.
 // (WS ve klip indirme token'ı query ile geçiyor → düz loglanırsa kısa ömürlü de olsa sızar.)
@@ -84,6 +86,18 @@ const app = Fastify({
 
 // WebSocket eklentisi (anlık eşleşme + odadan çıkarma bildirimi)
 app.register(websocket);
+
+// SOSYAL BÖLÜM UYKUDA → SUNUCU UÇLARI DA KAPALI (18 Eki 2026).
+// Uygulamada SOSYAL_ACIK=false; ekranlar gizli ama ~30 uç sunucuda canlıydı:
+// sınırsız arkadaşlık isteği + bildirim, herkesi odadan attıran /report, LiveKit
+// belirteci… (güvenlik denetimi). Ulaşılamayan özellik saldırı yüzeyi olmasın.
+// Açmak: Render'da SOSYAL_ACIK=1 (uygulamadaki bayrakla BİRLİKTE).
+// /me/activity bilerek açık: istemci (core/activity.js) hata alınca her
+// tetiklemede yeniden deniyor; /profile/username-check ve /push/register sosyal değil.
+const SOSYAL_ACIK = process.env.SOSYAL_ACIK === "1";
+app.addHook("onRequest", async (req, reply) => {
+  if (!SOSYAL_ACIK && sosyalYolMu(req.url)) return reply.code(404).send({ error: "bulunamadı" });
+});
 
 // Sesli klip yüklemesi için ikili (binary) gövde ayrıştırıcı
 app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (req, body, done) => done(null, body));
@@ -542,9 +556,14 @@ app.post("/word/translate", async (req, reply) => {
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!reading.readingConfigured()) return reply.code(503).send({ error: "AI servisi yakında etkinleşecek." });
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
-  if (!aiquota.underTranslateCap(userId)) return reply.code(429).send({ error: "Bugünlük çeviri hakkın doldu, yarın tekrar dene." });
   const { en, definition, example } = req.body || {};
   if (!en) return reply.code(400).send({ error: "kelime gerekli" });
+  // ÖNBELLEK İSABETİ KOTA YAKMAZ (18 Eki 2026). Kota önce yanıyordu: çoğu çeviri
+  // önbellekten dönse de hem kişisel hem GENEL günlük tavan doluyordu — birkaç
+  // hesap herkesin YZ'sini bir günlüğüne kapatabiliyordu (güvenlik denetimi).
+  const hazir = reading.translateOnbellekte(String(en).slice(0, 40), definition, example);
+  if (hazir) return { tr: hazir };
+  if (!aiquota.underTranslateCap(userId)) return reply.code(429).send({ error: "Bugünlük çeviri hakkın doldu, yarın tekrar dene." });
   aiquota.bumpTranslate(userId);
   try {
     const tr = await reading.translateWordCard(String(en).slice(0, 40), definition, example);
@@ -571,7 +590,7 @@ app.post("/reading/rate", async (req, reply) => {
   if (perUserLimited("feedback", userId, 20)) return reply.code(429).send({ error: "çok sık" });
   const { key, up } = req.body || {};
   if (!key) return reply.code(400).send({ error: "key gerekli" });
-  const r = await reading.rateReading(String(key).slice(0, 160), !!up);
+  const r = await reading.rateReading(String(key).slice(0, 160), !!up, userId);
   return { ok: true, ...r };
 });
 
@@ -623,7 +642,11 @@ app.post("/word/example", async (req, reply) => {
   if (!en) return reply.code(400).send({ error: "kelime gerekli" });
   aiquota.bumpAi(userId);
   try {
-    const example = await reading.generateExample(String(en).slice(0, 40), String(tr || "").slice(0, 80), String(level || "B1"), String(context || "").slice(0, 40));
+    // İstemcinin "tr"si yalnız sözlükte OLMAYAN kelimede kullanılır ve o sonuç
+    // paylaşılan önbelleğe yazılmaz (bkz. sozluk.js — önbellek zehirlenmesi).
+    const kayit = sozlukte(en);
+    const anlam = kayit ? kayit.tr : String(tr || "").slice(0, 80);
+    const example = await reading.generateExample(String(en).slice(0, 40), anlam, String(level || "B1"), String(context || "").slice(0, 40), { paylas: !!kayit });
     return { example };
   } catch (e) {
     return yzHatasi(reply, e, app.log);
@@ -636,9 +659,15 @@ app.post("/word/image", async (req, reply) => {
   if (!userId) return reply.code(401).send({ error: "kimlik doğrulanamadı" });
   if (!images.imagesConfigured()) return reply.code(503).send({ error: "Görsel servisi yakında." });
   if (aiRateLimited(userId)) return reply.code(429).send({ error: "Çok hızlı gidiyorsun — birkaç saniye bekle." });
-  const { en, tr, definition } = req.body || {};
+  const { en } = req.body || {};
   if (!en) return reply.code(400).send({ error: "kelime gerekli" });
   const word = String(en).slice(0, 40);
+  // GÖRSEL YALNIZ SÖZLÜK KELİMESİNE (18 Eki 2026). Sonuç kelime bazında herkes için
+  // saklanıyor; istemcinin gönderdiği tr/definition aramayı yönlendirebildiği için
+  // artık hiç kullanılmıyor, anlam sunucunun sözlüğünden geliyor (sozluk.js).
+  const kayit = sozlukte(word);
+  if (!kayit) return { image: { photos: [], depictable: false } };
+  const { tr, definition } = kayit;
   // SÖZLÜK DIŞI RASTGELE DİZGE MODELE HİÇ GİTMESİN.
   // Önbellek kelime bazında; uydurma dizge her seferinde ıska üretip
   // Gemini + Pexels çağrısı doğuruyor ve word_images tablosunu şişiriyordu.

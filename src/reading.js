@@ -483,6 +483,10 @@ export async function generateMnemonic(en, tr) {
 // dokununca Türkçesi çıkacak. Önbellek kelime bazında + TÜM kullanıcılarca paylaşılır
 // (mnemonic deseni) → aynı kelime hayatta bir kez çevrilir.
 const translateCache = new Map();
+// Önbellekte varsa modele gitmeden döner — çağıran kotayı YAKMASIN diye ayrı (18 Eki).
+export function translateOnbellekte(en, definition, example) {
+  return translateCache.get(baglamKey(en, definition, example)) || null;
+}
 export async function translateWordCard(en, definition, example) {
   const key = baglamKey(en, definition, example);
   if (translateCache.has(key)) return translateCache.get(key);
@@ -722,14 +726,20 @@ async function ornekPut(key, example) {
 
 const exampleCache = new Map();
 const ORNEK_BELLEK_CAP = 5000;   // yalnızca BELLEK katmanı; kalıcı katman sınırsız
-export async function generateExample(en, tr, level, context) {
+// opts.paylas: anlam sunucunun sözlüğünden geldiyse true → sonuç kalıcı (herkese
+// açık) önbelleğe yazılır/okunur. false ise anlam İSTEMCİDEN geldi: yalnız bellek
+// katmanı ve anahtarda anlamın özeti var — zehirli bir istek yalnız kendi anahtarına düşer.
+export async function generateExample(en, tr, level, context, opts = {}) {
   const lvl = ["A1", "A2", "B1", "B2", "C1", "C2"].includes(level) ? level : "B1";
   const ctx = baglamCoz(context);
-  const key = `${String(en).toLowerCase()}|${lvl}|${ctx}`;
+  const paylas = !!opts.paylas;
+  const key = paylas
+    ? `${String(en).toLowerCase()}|${lvl}|${ctx}`
+    : `yerel:${baglamKey(en, tr)}|${lvl}|${ctx}`;
   if (exampleCache.has(key)) return exampleCache.get(key);
   // KALICI KATMAN. Süreç yeni başlamış olsa bile başka bir kullanıcının (ya da
   // bu kullanıcının geçen haftaki oturumunun) ürettiği cümle burada duruyor.
-  const kalici = await ornekGet(key);
+  const kalici = paylas ? await ornekGet(key) : null;
   if (kalici?.en) { bellegeKoy(key, kalici); return kalici; }
   if (!KEY && !ALT_KEY) throw new Error("AI servisi henüz yapılandırılmadı.");
   const prompt = `Write ONE natural English example sentence at CEFR level ${lvl} that clearly uses the word "${en}" (Turkish meaning: ${tr}).
@@ -745,7 +755,7 @@ Return ONLY JSON: {"en": string, "tr": string}`;
   const out = { en: String(parsed.en || "").slice(0, 200).trim(), tr: String(parsed.tr || "").slice(0, 200).trim() };
   if (!out.en) throw new Error("Örnek cümle üretilemedi.");
   bellegeKoy(key, out);
-  ornekPut(key, out).catch(() => {});   // yazmayı BEKLEME: cümle hazır
+  if (paylas) ornekPut(key, out).catch(() => {});   // yazmayı BEKLEME: cümle hazır
   return out;
 }
 
@@ -852,8 +862,27 @@ async function oylariGetir(key) {
   } catch (_) { return { up: 0, down: 0 }; }
 }
 
-export async function rateReading(key, up) {
+// KİŞİ BAŞINA BİR OY (18 Eki 2026). Kimin oy verdiği tutulmuyordu: tek hesap
+// üç kez "beğenmedim" diyerek paylaşılan parçayı herkes için siliyordu (yeniden
+// üretim maliyeti + önbellek çalkalanması). Bellekte (parça → oy verenler);
+// süreç yeniden başlarsa en kötü ihtimalle bir kişi bir oy daha verebilir.
+const oyVerenler = new Map();
+const OY_BELLEK_CAP = 5000;
+function oyVerdiMi(key, userId) {
+  if (!userId) return false;
+  let k = oyVerenler.get(key);
+  if (k?.has(userId)) return true;
+  if (!k) {
+    if (oyVerenler.size >= OY_BELLEK_CAP) oyVerenler.delete(oyVerenler.keys().next().value);
+    k = new Set(); oyVerenler.set(key, k);
+  }
+  k.add(userId);
+  return false;
+}
+
+export async function rateReading(key, up, userId) {
   if (!key) return { replaced: false };
+  if (oyVerdiMi(key, userId)) return { replaced: false };
   const f = await oylariGetir(key);
   if (up) f.up++; else f.down++;
   readingFeedback.set(key, f);
@@ -891,7 +920,7 @@ export async function reportReading(key, reason, note, userId) {
     readingFeedback.delete(key);
     return { ok: true, replaced: true };
   }
-  const r = await rateReading(key, false);
+  const r = await rateReading(key, false, userId);
   return { ok: true, ...r };
 }
 
