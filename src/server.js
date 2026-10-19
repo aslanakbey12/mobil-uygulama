@@ -59,18 +59,30 @@ import { getRoom, roomStats, leaveRoom, createHostedRoom, getRoomByCode, addMemb
 import { sozlukte } from "./sozluk.js";
 import { sosyalYolMu } from "./sosyal.js";
 
+export const GUVENILIR_VEKIL = [
+  "loopback", "linklocal", "uniquelocal",
+  "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18",
+  "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17",
+  "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+  "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32",
+  "2a06:98c0::/29", "2c0f:f248::/32",
+];
+
 // Logger: istek URL'lerindeki token/access_token query paramlarını REDAKTE et.
 // (WS ve klip indirme token'ı query ile geçiyor → düz loglanırsa kısa ömürlü de olsa sızar.)
 const app = Fastify({
   // Render bir ters proxy: bu olmadan req.ip = yük dengeleyicinin adresi, yani
-  // TÜM kullanıcılar IP başına rate limit'te TEK kovayı paylaşıyordu — kimliksiz
-  // bir betik dakikada 240 istekle herkesi 429'a düşürebilirdi. Render
-  // X-Forwarded-For gönderir; Fastify ilk (istemci) adresi req.ip yapar.
-  // `true` (hop sayısı değil) BİLİNÇLİ: hop sayısı Render'ın önüne ikinci bir
-  // vekil girerse herkesi sessizce yine tek kovaya düşürür; `true` ile en kötü
-  // durum, saldırganın sahte başlıkla kendi sınırını aşması — başkasını
-  // kesemez. fastify ≥ 5.12.1 (GHSA-3m5p-2c4r-xxw2) şart, package.json'da.
-  trustProxy: true,
+  // TÜM kullanıcılar IP başına rate limit'te TEK kovayı paylaşıyordu.
+  // `true` YANLIŞTI (denetim 18 Eki): zincirin EN SOLUNU alıyordu, orası
+  // istemcinin kendi yazdığı yer — her istekte sahte X-Forwarded-For ile IP
+  // sınırları aşılıyordu. Canlıda ölçüldü (/health?xff=1, 19 Eki 2026):
+  //   xff = "<istemcinin yazdığı…>, <gerçek IP>, <Cloudflare>, <10.x Render>",
+  //   soket = 127.0.0.1
+  // Hop sayısı (3) yerine ADRES listesi: yerel/özel ağ + Cloudflare aralıkları.
+  // Render araya bir iç vekil daha koyarsa da doğru kalır. Cloudflare yeni
+  // aralık eklerse o kullanıcılar CF adresinde birleşir — liste:
+  // https://www.cloudflare.com/ips/ (fastify ≥ 5.12.1 şart, package.json'da)
+  trustProxy: GUVENILIR_VEKIL,
   // Gövde sınırı: /progress istemciden büyük bir jsonb alıyor (ağır kullanıcıda
   // ~700 KB). Fastify varsayılanı 1 MB — sınıra dayanıyorduk. Bilinçli 2 MB:
   // ağır kullanıcıya yer bırakır, keyfi büyük gövdeyi yine reddeder.
