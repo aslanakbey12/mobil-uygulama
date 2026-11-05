@@ -81,6 +81,10 @@ async function openaiUyumlu(model, body, ms) {
   }
   // thinkingConfig Gemini'ye özgü; karşılığı yok, sessizce düşer.
 
+  // OpenRouter: metni saklayıp eğitimde kullanan sağlayıcılara gitmesin. Ölçüldü
+  // (5 Kas 2026): DeepSeek v4 Pro ve Flash için uygun sağlayıcı var, maliyet aynı.
+  if (BASE_URL.includes("openrouter.ai")) istek.provider = { data_collection: "deny" };
+
   const r = await post(
     `${BASE_URL.replace(/\/+$/, "")}/chat/completions`,
     {
