@@ -1579,7 +1579,11 @@ app.post("/account/delete", async (req, reply) => {
     // 2 yıl kalıyordu. Silmeden önce kimlik düşürülüyor (denetim 28 Eyl).
     try { await s.from("content_reports").update({ user_id: null }).eq("user_id", userId); } catch (_) {}
     try { await s.auth.admin.deleteUser(userId); }
-    catch (e) { return reply.code(500).send({ error: String(e.message || e) }); }
+    catch (e) {
+      // Ham hata metni istemciye gitmesin (iç ayrıntı sızıntısı); gerçeği sunucu loguna yaz.
+      app.log.error({ err: String(e?.message || e) }, "hesap-silme-hatasi");
+      return reply.code(500).send({ error: "Hesap silinemedi, birazdan tekrar dene." });
+    }
   }
   return { ok: true };
 });

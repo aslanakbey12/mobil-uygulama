@@ -90,7 +90,7 @@ export async function testModels() {
   const cands = ["gemini-flash-latest", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-001", "gemini-2.5-pro", "gemini-flash-lite-latest", "gemini-3-flash-preview"];
   const out = {};
   for (const m of cands) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`;
     const t0 = Date.now();
     try {
       const r = await postGemini(url, { contents: [{ parts: [{ text: "Say OK" }] }], generationConfig: { maxOutputTokens: 10 } }, 25000);
@@ -104,7 +104,7 @@ export async function testModels() {
 export async function listModels() {
   if (!KEY && !ALT_KEY) return ["no-key"];
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${KEY}&pageSize=200`);
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", { headers: { "x-goog-api-key": KEY } });
     if (!r.ok) return [`ERR ${r.status}`];
     const d = await r.json();
     return (d.models || [])
@@ -199,7 +199,7 @@ async function postGemini(url, body, ms = 30000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: ctrl.signal });
+    return await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": KEY }, body: JSON.stringify(body), signal: ctrl.signal });
   } finally { clearTimeout(timer); }
 }
 
@@ -245,7 +245,7 @@ export { buildPrompt as __buildPromptTest };
 // lite ve pro modelleri thinkingConfig'i reddedip 400 döner, ham gövdeyle
 // atmak karşılaştırmayı model farkı değil istek hatası olarak gösterirdi.
 export function __postGeminiTest(model, body, ms = 60000) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   return postGemini(url, bodyFor(model, { safetySettings: SAFETY, ...body }), ms);
 }
 

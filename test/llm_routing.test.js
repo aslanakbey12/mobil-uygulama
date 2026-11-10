@@ -86,3 +86,14 @@ describe("model adı sağlayıcıyı belirler", () => {
     } finally { y.geri(); }
   });
 });
+
+describe("Gemini anahtarı URL'de değil başlıkta gider", () => {
+  test("gemini çağrısı: url'de key= yok, x-goog-api-key başlığı var", async () => {
+    const y = yakala();
+    try {
+      await callModel("gemini-flash-latest", govde(), 1000);
+      assert.doesNotMatch(y.cagrilar[0].url, /key=/);
+      assert.equal(y.cagrilar[0].opt.headers["x-goog-api-key"], "test-gemini-key");
+    } finally { y.geri(); }
+  });
+});

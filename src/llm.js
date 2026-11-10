@@ -45,8 +45,8 @@ function istemMetni(body) {
 // finishReason "MAX_TOKENS" ise çağıran taraf kesik çıktıyı başarı saymıyor.
 
 async function gemini(model, body, ms) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEY}`;
-  const r = await post(url, { "content-type": "application/json" }, body, ms);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const r = await post(url, { "content-type": "application/json", "x-goog-api-key": KEY }, body, ms);
   if (!r.ok) {
     let error = "";
     try { error = String((await r.json())?.error?.message || "").slice(0, 300); } catch (_) { /* JSON değilse geç */ }
