@@ -48,6 +48,7 @@ const havuz = (pool) => (Array.isArray(pool) ? pool.slice(0, 500) : []);
 // YZ hatası istemciye SABİT metinle döner; sağlayıcı ayrıntısı loga.
 const yzHatasi = (reply, e, log) => { log.warn({ err: String(e?.message || e) }, "yz-hata"); return reply.code(502).send({ error: "Yapay zekâ şu an yanıt veremedi, birazdan tekrar dene." }); };
 import { supaConfigured, supa } from "./supabase.js";
+import { revenueCatMusteriSil } from "./revenuecat.js";
 import { isPremium, setPremium, isAgeConfirmed } from "./entitlements.js";
 import * as coach from "./coach.js";
 
@@ -1584,6 +1585,8 @@ app.post("/account/delete", async (req, reply) => {
       app.log.error({ err: String(e?.message || e) }, "hesap-silme-hatasi");
       return reply.code(500).send({ error: "Hesap silinemedi, birazdan tekrar dene." });
     }
+    // Supabase silindikten SONRA: RevenueCat hatası kullanıcının silmesini bozmamalı.
+    await revenueCatMusteriSil(userId, app.log);
   }
   return { ok: true };
 });
