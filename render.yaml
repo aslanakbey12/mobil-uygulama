@@ -49,9 +49,12 @@ services:
       - key: COACH_CHAT_OPEN
         value: "0"
       # ── YZ MALİYET FRENLERİ ──
-      # Kullanıcı başına günlük çağrı sınırı.
+      # Kullanıcı başına günlük çağrı sınırı. 300'den 100'e (11 Kas 2026): gerçek kullanıcı
+      # (hafıza ipucu + örnek cümle) günde 100'e yaklaşmıyor; 300'de ~70 sahte hesap
+      # 20 binlik sistem tavanını doldurup herkesin YZ'sini gece yarısına kadar kapatıyordu.
+      # 100 ile aynı iş ~200 hesap ister.
       - key: AI_DAILY_CAP
-        value: "300"
+        value: "100"
       # Çeviri AYRI kotada: kart çevirileri minik ve önbellekli, asıl YZ hakkını yemesin.
       - key: AI_TRANSLATE_DAILY_CAP
         value: "600"

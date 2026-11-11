@@ -8,7 +8,7 @@
 // bugünün sayaçları yüklenir ve çalışırken periyodik olarak yazılır.
 import { supa } from "./supabase.js";
 
-const CAP = parseInt(process.env.AI_DAILY_CAP || "300", 10);
+const CAP = parseInt(process.env.AI_DAILY_CAP || "100", 10);   // render.yaml ile aynı (11 Kas 2026)
 const TR_CAP = parseInt(process.env.AI_TRANSLATE_DAILY_CAP || "600", 10);
 const GLOBAL_CAP = parseInt(process.env.AI_GLOBAL_DAILY_CAP || "20000", 10);
 const FLUSH_MS = parseInt(process.env.AI_QUOTA_FLUSH_MS || "60000", 10);
