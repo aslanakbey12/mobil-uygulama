@@ -19,6 +19,7 @@ import * as aiquota from "./aiquota.js";
 import { moderateChat } from "./textsafety.js";
 import { sendPush } from "./push.js";
 import { rateLimited, aiRateLimited, perUserLimited } from "./ratelimit.js";
+import { sayacDogrula } from "./anonimsayac.js";
 const CLIENT_ERROR_MAX = parseInt(process.env.CLIENT_ERROR_RL_MAX || "10", 10);   // dakikada 10 rapor/kullanıcı
 
 // AI sohbet sınırları — maliyet + pedagoji (oturumun net bir sonu olsun).
@@ -1305,6 +1306,27 @@ app.post("/push/register", async (req, reply) => {
   if (!db) return { ok: true };
   await db.from("push_tokens").upsert({ user_id: userId, token, updated_at: new Date().toISOString() }, { onConflict: "user_id,token" });
   return { ok: true };
+});
+
+// ── Anonim geri dönüş sayacı (db/28) ──────────────────────────────────────────
+// Kimliksiz, rızasız, KİMLİK TAŞIMAYAN sayaç: gövde yalnız {k,g,p} (bkz. anonimsayac.js).
+// logLevel "silent": Fastify'ın istek günlüğü remoteAddress (IP) yazıyor; bu uçta ne IP
+// ne gövde loga girmemeli. Hatada da hiçbir şey loglanmaz. Gövde sınırı 256 bayt.
+// IP başına günde 3. Operatör NAT'ında aynı IP'yi paylaşanlar
+// eksik sayılır; oranlar (D1/D7) yine de yaklaşık doğru kalır.
+const SAYAC_IP_GUNLUK = 200;   // operatör NAT: yüzlerce telefon tek IP arkasında; düşük tavan saymayı bozar, şişirme riski yalnız sayıyı etkiler
+app.post("/sayac", { bodyLimit: 256, logLevel: "silent" }, async (req, reply) => {
+  const v = sayacDogrula(req.body);
+  if (!v) return reply.code(400).send({ error: "geçersiz" });
+  if (perUserLimited("sayac", req.ip, SAYAC_IP_GUNLUK, 86400000)) return reply.code(429).send({ error: "çok fazla" });
+  const db = supa();
+  if (db) {
+    try {
+      const { error } = await db.rpc("anonim_sayac_artir", { p_kurulum_gunu: v.k, p_gun_farki: v.g, p_platform: v.p });
+      if (error) return reply.code(503).send({ error: "geçici hata" });
+    } catch (_) { return reply.code(503).send({ error: "geçici hata" }); }
+  }
+  return reply.code(204).send();
 });
 
 // ── İstemci çökme/hata raporu (hafif crash reporting — Sentry'ye kadar sunucu logu) ──

@@ -32,6 +32,9 @@ const ACIK = {
   // Misafir çökme raporu (29 Eyl 2026 kararı): kullanıcıların çoğu hesapsız;
   // IP başına sıkı sınır, kayıtta kimlik yok, yalnız loga yazar.
   "POST /client-error": 200,
+  // Anonim geri dönüş sayacı (db/28): kimlik taşımaz, kendi katı doğrulaması var;
+  // bu testin boş gövdesi doğrulamada düşer.
+  "POST /sayac": 400,
 };
 
 const ornekYol = (url) => url.replace(/:[A-Za-z_]+/g, "ornek").replace(/\*/g, "ornek");
